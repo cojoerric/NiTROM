@@ -22,7 +22,6 @@ def create_objective_and_gradient(manifold,opt_obj,mpi_pool,fom):
             Evaluate the cost function 
             Phi and Psi:    bases (size N x r) that define the projection operator
             tensors:        (A2,A3,...)
-            
         """
         
         Phi, Psi = params[0], params[1]
@@ -151,15 +150,46 @@ def create_objective_and_gradient(manifold,opt_obj,mpi_pool,fom):
             # Add the term j = 0 in the sums (2.13) and (2.14). Also add the  
             # contribution of the initial condition (last term in (2.14)) to grad_Psi.
             # Add also the contribution of the steady forcing to grad_Psi.
-            ej = e[:,0]
-            zj = Z[:,0]
+            ej, zj = e[:,0], Z[:,0]
             Ctej = fom.compute_output_derivative(PhiF@zj).T@ej
-            grad_Psi += (2/alpha)*np.einsum('i,j',PhiF@zj,PhiF.T@Ctej) - np.einsum('i,j',opt_obj.X[k,:,0],lam_j_0) \
+            grad_Psi += (2/alpha)*np.einsum('i,j',PhiF@zj,PhiF.T@Ctej) \
+                        - np.einsum('i,j',opt_obj.X[k,:,0],lam_j_0) \
                         - np.einsum('i,j',opt_obj.F[:,k],Int_lambda)
             grad_Phi += -(2/alpha)*np.einsum('i,j',Ctej - Psi@(PhiF.T@Ctej),F@zj)
 
         
-        
+        # Compute the gradient of the stability-promoting term
+        if opt_obj.l2_pen != None:
+            
+            idx = opt_obj.poly_comp.index(1)    # index of the linear tensor
+            
+            A = tensors[idx]
+            
+            time_pen = np.linspace(0,opt_obj.pen_tf,opt_obj.n_snapshots*opt_obj.nsave_rom)
+            Z = (solve_ivp(lambda t,z: A@z if np.linalg.norm(z) < 1e4 else 0*z,\
+                           [0,time_pen[-1]],opt_obj.randic,method='RK45',t_eval=time_pen)).y
+            Mu = (solve_ivp(lambda t,z: A.T@z if np.linalg.norm(z) < 1e4 else 0*z,\
+                           [0,time_pen[-1]],-2*opt_obj.l2_pen*Z[:,-1],method='RK45',t_eval=time_pen)).y
+            Mu = np.fliplr(Mu)
+            
+            
+            for k in range (opt_obj.n_snapshots - 1):
+                
+                k0, k1 = k*opt_obj.nsave_rom, (k+1)*opt_obj.nsave_rom
+                fZ = sp.interpolate.interp1d(time_pen[k0:k1],Z[:,k0:k1],kind='linear',fill_value='extrapolate')
+                fMu = sp.interpolate.interp1d(time_pen[k0:k1],Mu[:,k0:k1],kind='linear',fill_value='extrapolate')
+            
+                a = (time_pen[k1-1] - time_pen[k0])/2
+                b = (time_pen[k1-1] + time_pen[k0])/2
+                time_k_lg = a*tlg + b
+                
+                Zk = fZ(time_k_lg)
+                Muk = fMu(time_k_lg)
+                
+                for i in range (opt_obj.leggauss_deg):
+                    grad_tensors[idx] += a*wlg[i]*np.einsum('i,j',Muk[:,i],Zk[:,i])
+                
+
         if opt_obj.which_fix == 'fix_bases':
 
             grad_Phi *= 0.0; grad_Psi *= 0.0

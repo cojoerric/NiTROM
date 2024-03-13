@@ -24,7 +24,6 @@ class mpi_pool:
         Optional keyword arguments:
             fname_weights:          e.g., 'weight_%03d.txt' 
             fname_steady_forcing:   e.g., 'forcing_%03d.txt'
-            
         """
 
         self.comm = comm                            # MPI communicator
@@ -101,7 +100,10 @@ class optimization_objects:
                                                          second order components) 
 
         Optional keyword arguments:
-            which_fix:      one of fix_bases, fix_tensors or fix_none (default is fix_none)
+            which_fix:              one of fix_bases, fix_tensors or fix_none (default is fix_none)
+            stab_promoting_pen:     value of L2 regularization coefficient
+            stab_promoting_tf:      value of final time for stability promoting penalty
+            stab_promoting_ic:      random (unit-norm) vector to probe the stability penalty
         """
         
         
@@ -117,6 +119,7 @@ class optimization_objects:
         self.poly_comp = poly_comp
         self.generate_einsum_subscripts()
         
+        
         # Count the total number of trajectories in this batch and
         # scale the weight accordingly so that the cost function measures
         # the average error over snapshots and trajectories. (Notice that 
@@ -125,10 +128,33 @@ class optimization_objects:
         mpi_pool.comm.Allgather([np.asarray([self.my_n_traj]),MPI.INT],[counts,MPI.INT])
         self.weights *= np.sum(counts)
         
+        # Parse the keyword arguments
         self.which_fix = kwargs.get('which_fix','fix_none')
         if self.which_fix not in ['fix_tensors','fix_bases','fix_none']:
             raise ValueError ("which_fix must be fix_none, fix_tensors or fix_bases")
-    
+            
+        self.l2_pen = kwargs.get('stab_promoting_pen',None)
+        self.pen_tf = kwargs.get('stab_promoting_tf',None)
+        self.randic = kwargs.get('stab_promoting_ic',None)
+        
+        if self.l2_pen != None and self.pen_tf == None:
+            raise ValueError ("If you provide a value for stab_promoting_pen you \
+                              also have to provide a value for stab_promoting_tf")
+                              
+        if self.l2_pen != None and self.randic == None:
+            raise ValueError ("If you provide a value for stab_promoting_pen you \
+                              also have to provide a random ic vector of the same \
+                              size as the ROM")
+                              
+        if self.l2_pen != None and 1 not in self.poly_comp:
+            raise ValueError ("The penalty is currently implemented for the linear term \
+                              in the rom dynamics. You have no linear term.")
+                              
+        if self.randic != None: 
+            self.randic /= np.linalg.norm(self.randic)
+            self.randic = self.randic.reshape(-1)
+            
+            
     
     def generate_einsum_subscripts(self):
         """
@@ -187,7 +213,7 @@ class optimization_objects:
             J = np.zeros((len(z),len(z)))
             for (i, k) in enumerate(self.poly_comp):
                 
-                combs = list(combinations(self.einsum_ss[i][1:], r=k-1))
+                combs = list(combinations(self.einsum_ss[i][1:],r=k-1))
                 operands = [operators[i]] + [fq(t) for _ in range(k-1)]
                 for comb in combs:
                     equation = [self.einsum_ss[i][0]] + list(comb)
@@ -198,6 +224,9 @@ class optimization_objects:
             dzdt = J.T@z 
             
         return dzdt
+    
+    
+        
     
 
         
