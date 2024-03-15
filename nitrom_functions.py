@@ -4,6 +4,7 @@ from scipy.integrate import solve_ivp
 from string import ascii_lowercase as ascii
 import pymanopt
 
+import time as tlib
 
 def create_objective_and_gradient(manifold,opt_obj,mpi_pool,fom):
     
@@ -41,7 +42,18 @@ def create_objective_and_gradient(manifold,opt_obj,mpi_pool,fom):
             e = fom.compute_output(opt_obj.X[k,:,:]) - fom.compute_output(PhiF@sol.y)
             J += (1./opt_obj.weights[k])*np.trace(e.T@e)
         
-        return np.sum(np.asarray(mpi_pool.comm.allgather(J)))
+        if opt_obj.l2_pen != None:
+            
+            idx = opt_obj.poly_comp.index(1)    # index of the linear tensor
+            time_pen = np.linspace(0,opt_obj.pen_tf,opt_obj.n_snapshots*opt_obj.nsave_rom)
+            Z = (solve_ivp(lambda t,z: tensors[idx]@z if np.linalg.norm(z) < 1e4 else 0*z,\
+                           [0,time_pen[-1]],opt_obj.randic,method='RK45',t_eval=time_pen)).y
+            
+            J += opt_obj.l2_pen*np.dot(Z[:,-1],Z[:,-1])
+            
+        J = np.sum(np.asarray(mpi_pool.comm.allgather(J)))
+        
+        return J
 
     @pymanopt.function.numpy(manifold)
     def euclidean_gradient(*params): 
@@ -51,7 +63,7 @@ def create_objective_and_gradient(manifold,opt_obj,mpi_pool,fom):
             Phi and Psi:    bases (size N x r) that define the projection operator
             tensors:        (A2,A3,...)
         """
-        
+
         Phi, Psi = params[0], params[1]
         tensors = params[2:]
         
@@ -210,7 +222,6 @@ def create_objective_and_gradient(manifold,opt_obj,mpi_pool,fom):
             grad_Psi = sum(mpi_pool.comm.allgather(grad_Psi))
             for k in range (len(grad_tensors)):
                 grad_tensors[k] = sum(mpi_pool.comm.allgather(grad_tensors[k]))
-
 
         return grad_Phi, grad_Psi, *grad_tensors
     
