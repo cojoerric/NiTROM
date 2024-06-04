@@ -124,18 +124,4 @@ def operator_inference(mpi_pool,Phi,poly_comp,lambdas):
     
     return extract_tensors(r,poly_comp,S)
     
-    
-
-        
-    
-        
-        
-        
-        
-        
-        
-    
-    
-    
-    
-    
+  
