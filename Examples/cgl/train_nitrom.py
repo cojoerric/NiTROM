@@ -8,7 +8,8 @@ import pymanopt
 import pymanopt.manifolds as manifolds
 import pymanopt.optimizers as optimizers
 
-sys.path.append(os.path.abspath("../../OptimizationFunctions/"))
+sys.path.append("../../PyManopt_Functions/")
+sys.path.append("../../Optimization_Functions/")
 
 from my_pymanopt_classes import myAdaptiveLineSearcher
 
@@ -21,9 +22,10 @@ import fom_class_cgl
 L = 100
 nx = 256
 x = np.linspace(-L/2,L/2,num=nx,endpoint=True) 
-nu = 2 + 0.4*1j 
+nu = 0.0*(2 + 0.4*1j)
 gamma = 1 - 1j 
-mu0 = 0.38
+# mu0 = 0.38
+mu0 = 0.05
 mu2 = -0.01
 a = 0.1
 
@@ -42,10 +44,10 @@ tsave = time[::nsave]
 
 traj_path = "./trajectories/"
 
-fname_traj = traj_path + "traj_%03d.txt"
-fname_weight = traj_path + "weight_%03d.txt"
-fname_deriv = traj_path + "deriv_%03d.txt"
-fname_time = traj_path + "time.txt"
+fname_traj = traj_path + "traj_%03d.npy"
+fname_weight = traj_path + "weight_%03d.npy"
+fname_deriv = traj_path + "deriv_%03d.npy"
+fname_time = traj_path + "time.npy"
 
 
 n_traj = 8
@@ -60,16 +62,16 @@ r = 5               # ROM dimension
 poly_comp = [1,3]   # Model with a linear part and a quadratic part
 
 
-# Phi_pod = np.load("data/Phi_pod.npy")
-# A2_oi = np.load("data/A2_oi.npy")
-# A4_oi = np.load("data/A4_oi.npy").reshape((r,r,r,r))
-# tensors_oi = (A2_oi,A4_oi)
+Phi_pod = np.load("data/Phi_pod.npy")
+A2_oi = np.load("data/A2_oi.npy")
+A4_oi = np.load("data/A4_oi.npy").reshape((r,r,r,r))
+tensors_oi = (A2_oi,A4_oi)
 
-Phi_nit = np.load("data/Phi_nit.npy")
-Psi_nit = np.load("data/Psi_nit.npy")
-A2_nit = np.load("data/A2_nit.npy")
-A4_nit = np.load("data/A4_nit.npy").reshape((r,r,r,r))
-tensors_nit = (A2_nit,A4_nit)
+# Phi_nit = np.load("data/Phi_nit.npy")
+# Psi_nit = np.load("data/Psi_nit.npy")
+# A2_nit = np.load("data/A2_nit.npy")
+# A4_nit = np.load("data/A4_nit.npy").reshape((r,r,r,r))
+# tensors_nit = (A2_nit,A4_nit)
 
 
 which_trajs = np.arange(0,pool.my_n_traj,1)
@@ -84,8 +86,8 @@ Euc_rrrr = manifolds.Euclidean(r,r,r,r)
 M = manifolds.Product([Gr,St,Euc_rr,Euc_rrrr])
 
 line_searcher = myAdaptiveLineSearcher(contraction_factor=0.4,sufficient_decrease=0.1,max_iterations=25,initial_step_size=1)
-# point = (Phi_pod,Phi_pod) + tensors_oi
-point = (Phi_nit,Psi_nit) + tensors_nit
+point = (Phi_pod,Phi_pod) + tensors_oi
+# point = (Phi_nit,Psi_nit) + tensors_nit
 
 
 if pool.rank == 0:  verb = 2
