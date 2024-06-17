@@ -46,15 +46,16 @@ class mpi_pool:
         
         # Load data from file
         self.load_trajectories(fname_traj)
+        self.time = np.load(fname_time)
         self.load_weights(kwargs)
         self.load_steady_forcing(kwargs)
-        self.time = np.loadtxt(fname_time)
+        self.load_time_derivatives(kwargs)
         
         
     def load_trajectories(self,fname_traj):
         
         self.fnames_traj = [fname_traj%(k+self.disps[self.rank]) for k in range (self.my_n_traj)]
-        X = [np.loadtxt(self.fnames_traj[k]) for k in range (self.my_n_traj)]
+        X = [np.load(self.fnames_traj[k]) for k in range (self.my_n_traj)]
         self.N, self.n_snapshots = X[0].shape
         self.X = np.zeros((self.my_n_traj,self.N,self.n_snapshots))
         for k in range (self.my_n_traj): self.X[k,] = X[k]
@@ -65,7 +66,7 @@ class mpi_pool:
         self.weights = np.ones(self.my_n_traj)
         if fname_weights != None:
             self.fnames_weights = [fname_weights%(k+self.disps[self.rank]) for k in range (self.my_n_traj)]
-            weights = [np.loadtxt(self.fnames_weights[k]) for k in range (self.my_n_traj)]
+            weights = [np.load(self.fnames_weights[k]) for k in range (self.my_n_traj)]
             self.weights = np.zeros(self.my_n_traj)
             for k in range (self.my_n_traj): self.weights[k] = weights[k]
             
@@ -75,7 +76,16 @@ class mpi_pool:
         self.F = np.zeros((self.N,self.my_n_traj))
         if fname_forcing != None:
             self.fnames_forcing = [(fname_forcing)%(k+self.disps[self.rank]) for k in range (self.my_n_traj)]
-            for k in range (self.my_n_traj):  self.F[:,k] = np.loadtxt(self.fnames_forcing[k])
+            for k in range (self.my_n_traj):  self.F[:,k] = np.load(self.fnames_forcing[k])
+    
+    def load_time_derivatives(self,kwargs):
+        
+        fname_deriv = kwargs.get('fname_derivs',None)
+        if fname_deriv != None:
+            self.fnames_deriv = [fname_deriv%(k+self.disps[self.rank]) for k in range (self.my_n_traj)]
+            dX = [np.load(self.fnames_deriv[k]) for k in range (self.my_n_traj)]
+            self.dX = np.zeros((self.my_n_traj,self.N,self.n_snapshots))
+            for k in range (self.my_n_traj): self.dX[k,] = dX[k]
         
         
 
@@ -124,9 +134,9 @@ class optimization_objects:
         # scale the weight accordingly so that the cost function measures
         # the average error over snapshots and trajectories. (Notice that 
         # if all trajectories are loaded, then np.sum(counts) = mpi_pool.n_traj)
-        counts = np.zeros(mpi_pool.size,dtype=np.int64)    
+        counts = np.zeros(mpi_pool.size,dtype=np.int64)
         mpi_pool.comm.Allgather([np.asarray([self.my_n_traj]),MPI.INT],[counts,MPI.INT])
-        self.weights *= np.sum(counts)
+        self.weights *= np.sum(counts)*self.n_snapshots
         
         # Parse the keyword arguments
         self.which_fix = kwargs.get('which_fix','fix_none')
@@ -188,6 +198,7 @@ class optimization_objects:
         else:
             f = kwargs.get('forcing_interp',None)
             f = f(t) if f != None else np.zeros(len(z))
+            u = u.copy() if hasattr(u,"__len__") == True else u(t)
             dzdt = u + f
             for (i, k) in enumerate(self.poly_comp):
                 equation = ",".join(self.einsum_ss[i])
