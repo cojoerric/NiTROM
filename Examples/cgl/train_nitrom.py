@@ -1,8 +1,26 @@
+import sys, os
+
+def set_cpu_threads(n):
+  n = str(int(n))
+  for k in (
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+    "NUMEXPR_NUM_THREADS"
+  ):
+    os.environ[k] = n
+ 
+# If you check 'htop -u <user>', you should see the nb. of threads used equal to 'nt'
+nt = 1
+set_cpu_threads(nt)
+
+
 import numpy as np 
 import scipy 
 from mpi4py import MPI
 
-import sys, os
+
 
 import pymanopt
 import pymanopt.manifolds as manifolds
@@ -22,10 +40,10 @@ import fom_class_cgl
 L = 100
 nx = 256
 x = np.linspace(-L/2,L/2,num=nx,endpoint=True) 
-nu = 0.0*(2 + 0.4*1j)
+nu = 1.0*(2 + 0.4*1j)
 gamma = 1 - 1j 
-# mu0 = 0.38
-mu0 = 0.05
+mu0 = 0.38
+# mu0 = 0.05
 mu2 = -0.01
 a = 0.1
 
@@ -33,7 +51,7 @@ fom = fom_class_cgl.CGL(x,nu,gamma,mu0,mu2,a)
 
 
 dt = 1e-2
-T = 1000
+T = 500
 time = dt*np.arange(0,T//dt,1)
 tstep_cgl = fom_class_cgl.time_step_cgl(fom,time)
 
@@ -94,17 +112,19 @@ if pool.rank == 0:  verb = 2
 else:               verb = 0
 
 k0 = 0
-kouter = 50
-
+kouter = 200
 
 if k0 == 0:
     costvec_nit = []
     gradvec_nit = []
+    itervec_nit = []
+    it0 = 0
     
 for k in range (k0,k0+kouter):
     
     if np.mod(k,2) == 0:    which_fix = 'fix_bases'
     else:                   which_fix = 'fix_tensors'
+    # which_fix = 'fix_none'
 
     opt_obj_inputs = (pool,which_trajs,which_times,leggauss_deg,nsave_rom,poly_comp)
     opt_obj_kwargs = {'which_fix':which_fix}
@@ -127,9 +147,14 @@ for k in range (k0,k0+kouter):
     if k == 0:    
         costvec_nit.extend(costvec_nit_k) 
         gradvec_nit.extend(gradvec_nit_k) 
+        itervec_nit.extend(itervec_nit_k)
+        
     else:         
         costvec_nit.extend(costvec_nit_k[1:]) 
         gradvec_nit.extend(gradvec_nit_k[1:]) 
+        itervec_nit.extend(np.asarray(itervec_nit_k[:-1]) + it0)
+        
+    it0 = itervec_nit[-1]
 
 # check_gradient(problem,x=[Phi_pod,Phi_pod,*tensors_oi])
 # check_gradient(problem,x=result.point)
@@ -144,7 +169,10 @@ if pool.rank == 0:
     np.save("data/Psi_nit.npy",Psi_nit)
     np.save("data/A2_nit.npy",tensors_nit[0])
     np.save("data/A4_nit.npy",tensors_nit[1].reshape((r,r**3)))
-
+    
+    
+    np.save("data/costvec_nit.npy",costvec_nit)
+    np.save("data/itervec_nit.npy",itervec_nit)
 
 
 

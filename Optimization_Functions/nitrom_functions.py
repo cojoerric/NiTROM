@@ -1,4 +1,4 @@
-import numpy as np 
+import numpy as np
 import scipy as sp
 from scipy.integrate import solve_ivp
 from string import ascii_lowercase as ascii
@@ -25,10 +25,12 @@ def create_objective_and_gradient(manifold,opt_obj,mpi_pool,fom):
             tensors:        (A2,A3,...)
         """
         
+        
         Phi, Psi = params[0], params[1]
         tensors = params[2:]
         PhiF = Phi@sp.linalg.inv(Psi.T@Phi)
 
+        
         J = 0.0
         for k in range (mpi_pool.my_n_traj): 
 
@@ -38,12 +40,10 @@ def create_objective_and_gradient(manifold,opt_obj,mpi_pool,fom):
             u = Psi.T@opt_obj.F[:,k]
             sol = solve_ivp(opt_obj.evaluate_rom_rhs,[0,opt_obj.time[-1]],z0,\
                             method='RK45',t_eval=opt_obj.time,args=(u,) + tensors)
-
             e = fom.compute_output(opt_obj.X[k,:,:]) - fom.compute_output(PhiF@sol.y)
             J += (1./opt_obj.weights[k])*np.trace(e.T@e)
         
-        if opt_obj.l2_pen != None:
-            
+        if opt_obj.l2_pen != None and mpi_pool.rank == 0:
             idx = opt_obj.poly_comp.index(1)    # index of the linear tensor
             time_pen = np.linspace(0,opt_obj.pen_tf,opt_obj.n_snapshots*opt_obj.nsave_rom)
             Z = (solve_ivp(lambda t,z: tensors[idx]@z if np.linalg.norm(z) < 1e4 else 0*z,\
@@ -171,7 +171,7 @@ def create_objective_and_gradient(manifold,opt_obj,mpi_pool,fom):
 
         
         # Compute the gradient of the stability-promoting term
-        if opt_obj.l2_pen != None:
+        if opt_obj.l2_pen != None and mpi_pool.rank == 0:
             
             idx = opt_obj.poly_comp.index(1)    # index of the linear tensor
             
@@ -199,7 +199,7 @@ def create_objective_and_gradient(manifold,opt_obj,mpi_pool,fom):
                 Muk = fMu(time_k_lg)
                 
                 for i in range (opt_obj.leggauss_deg):
-                    grad_tensors[idx] += a*wlg[i]*np.einsum('i,j',Muk[:,i],Zk[:,i])
+                    grad_tensors[idx] += -a*wlg[i]*np.einsum('i,j',Muk[:,i],Zk[:,i])
                 
 
         if opt_obj.which_fix == 'fix_bases':

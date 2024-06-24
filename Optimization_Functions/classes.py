@@ -6,8 +6,6 @@ from string import ascii_lowercase as ascii
 class mpi_pool:
 
     def __init__(self,comm,n_traj,fname_traj,fname_time,**kwargs):
-    #(self,comm,n_traj,fname_root,format,file_type,fname_time,fname_root_weights,*argv):
-        
         
         """ 
         This class contains all the info regarding the MPI pool that will be used 
@@ -18,12 +16,13 @@ class mpi_pool:
         
         comm:           MPI Communicator
         n_traj:         total number of trajectories we wish to load from disk
-        fname_traj:     e.g., 'traj_%03d.txt' (string used to load each trajectory)
+        fname_traj:     e.g., 'traj_%03d.npy' (string used to load each trajectory)
         fname_time:     e.g., 'time.txt' (time vector at which we save snapshots)
         
         Optional keyword arguments:
-            fname_weights:          e.g., 'weight_%03d.txt' 
-            fname_steady_forcing:   e.g., 'forcing_%03d.txt'
+            fname_weights:          e.g., 'weight_%03d.npy' 
+            fname_steady_forcing:   e.g., 'forcing_%03d.npy'
+            fname_derivs:           e.g., 'fname_derivs_%03d.npy'
         """
 
         self.comm = comm                            # MPI communicator
@@ -33,6 +32,9 @@ class mpi_pool:
         self.n_traj = n_traj                        # Total number of training trajectories
         if self.size > self.n_traj:
             raise ValueError ("You have more MPI processes than trajectories!")
+        else:
+            if self.rank == 0:
+                print("Hello, you are running NiTROM with %d MPI processors."%self.size)
         
         self.my_n_traj = self.n_traj//self.size     # Number of trajectories owned by process self.rank
         self.my_n_traj += 1 if np.mod(self.n_traj,self.size) > self.rank else 0
@@ -87,9 +89,6 @@ class mpi_pool:
             self.dX = np.zeros((self.my_n_traj,self.N,self.n_snapshots))
             for k in range (self.my_n_traj): self.dX[k,] = dX[k]
         
-        
-
-
 class optimization_objects:
 
     def __init__(self,mpi_pool,which_trajs,which_times,leggauss_deg,nsave_rom,poly_comp,**kwargs):
@@ -164,7 +163,7 @@ class optimization_objects:
             self.randic /= np.linalg.norm(self.randic)
             self.randic = self.randic.reshape(-1)
             
-            
+        
     
     def generate_einsum_subscripts(self):
         """

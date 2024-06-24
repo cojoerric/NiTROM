@@ -11,12 +11,16 @@ import pymanopt
 import pymanopt.manifolds as manifolds
 import pymanopt.optimizers as optimizers
 from pymanopt.tools.diagnostics import check_gradient
-from pymanopt.optimizers.line_search import myAdaptiveLineSearcher
 
 plt.rcParams.update({"font.family":"serif","font.sans-serif":["Computer Modern"],'font.size':18,'text.usetex':True})
 plt.rc('text.latex',preamble=r'\usepackage{amsmath}')
 
-sys.path.append("/Users/alberto/Documents/SIAM_nitrom/OptimizationFunctions/")
+sys.path.append("../../PyManopt_Functions/")
+sys.path.append("../../Optimization_Functions/")
+
+from my_pymanopt_classes import myAdaptiveLineSearcher
+
+
 import classes
 import nitrom_functions 
 import opinf_functions as opinf_fun
@@ -31,7 +35,7 @@ lPOD, lOI, lTR, lOPT = 'solid', 'dotted', 'dashed', 'dashdot'
 #%% Instantiate the full-order model class
 
 n = 3 
-beta = 20
+beta = 5
 A2 = np.diag([-1,-2,-5])
 A3 = np.zeros((3,3,3))
 A3[:,:,-1] = np.diag([beta,beta,0.0])
@@ -45,36 +49,40 @@ fom = fom_class.full_order_model(A2,A3,B,C)
 
 traj_path = "./trajectories/"
 
-fname_traj = traj_path + "traj_%03d.txt"
-fname_weight = traj_path + "weight_%03d.txt"
-fname_forcing = traj_path + "forcing_%03d.txt"
-fname_deriv = traj_path + "deriv_%03d.txt"
-fname_time = traj_path + "time.txt"
+fname_traj = traj_path + "traj_%03d.npy"
+fname_weight = traj_path + "weight_%03d.npy"
+fname_forcing = traj_path + "forcing_%03d.npy"
+fname_deriv = traj_path + "deriv_%03d.npy"
+fname_time = traj_path + "time.npy"
 
 n_traj = 4
 
+max_val = 5/20
+# max_val = 1.0
+
 betas = np.asarray([0.01,0.1,0.2,0.248])
+# betas = max_val*np.asarray([0.05,0.4,0.8,0.99])
 n_traj = len(betas)
 weights = np.zeros(len(betas))
 for k in range (len(betas)):
     u = betas[k]*np.ones(3)
+    
     sol = solve_ivp(fom.evaluate_fom_dynamics,[0,time[-1]],np.zeros(3),'RK45',t_eval=time,args=(u,))
     
     dX = np.zeros((3,len(time)))
     for j in range (sol.y.shape[-1]):
         dX[:,j] = fom.evaluate_fom_dynamics(time[j],sol.y[:,j],u) - u
     
-    
-    id_ss = np.asarray([-betas[k]/(-1+4*betas[k]),-betas[k]/(-2+4*betas[k]),betas[k]/5])
+    id_ss = np.asarray([-betas[k]/(-1+beta/5*betas[k]),-betas[k]/(-2+beta/5*betas[k]),betas[k]/5])
     weights[k] = np.linalg.norm(fom.compute_output(id_ss))**2
     
-    np.savetxt(fname_traj%k,sol.y)
-    np.savetxt(fname_deriv%k,dX)
-    np.savetxt(fname_weight%k,[weights[k]])
-    np.savetxt(fname_forcing%k,u)
+    np.save(fname_traj%k,sol.y)
+    np.save(fname_deriv%k,dX)
+    np.save(fname_weight%k,[weights[k]])
+    np.save(fname_forcing%k,u)
     
 
-np.savetxt(traj_path + "time.txt",time)
+np.save(traj_path + "time.npy",time)
 
 
 #%% Compute POD model 
@@ -104,7 +112,7 @@ opt_obj_inputs = (pool,which_trajs,which_times,leggauss_deg,nsave_rom,[1,2])
 # opt_obj_kwargs = {'stab_promoting_pen':1e-2,'stab_promoting_tf':20,'stab_promoting_ic':(np.random.randn(r),)}
 
 
-opt_obj = classes.optimization_objects(*opt_obj_inputs)
+opt_obj = classes.optimization_objects(*opt_obj_inputs) #**opt_obj_kwargs)
 
 
 St = manifolds.Stiefel(n,r)
@@ -120,7 +128,7 @@ check_gradient(problem,x=[Phi_pod,Psi_pod,*tensors_pod])
 
 
 line_searcher = myAdaptiveLineSearcher(contraction_factor=0.5,sufficient_decrease=0.85,max_iterations=25,initial_step_size=1)
-optimizer = optimizers.ConjugateGradient(max_iterations=1000,min_step_size=1e-20,max_time=3600,line_searcher=line_searcher,log_verbosity=1)
+optimizer = optimizers.ConjugateGradient(max_iterations=2000,min_step_size=1e-20,max_time=3600,line_searcher=line_searcher,log_verbosity=1)
 
 
 point = (Phi_pod,Psi_pod) + tensors_pod
@@ -137,17 +145,10 @@ itervec_nit = result.log["iterations"]["iteration"]
 costvec_nit = result.log["iterations"]["cost"]
 gradvec_nit = result.log["iterations"]["gradient_norm"]
 
-#%%
-
-plt.figure()
-plt.plot(itervec_nit,costvec_nit)
-
-ax = plt.gca()
-ax.set_yscale('log')
 
 #%% Compute TrOOP model
 
-optimizer = optimizers.ConjugateGradient(max_iterations=200,min_step_size=1e-20,max_time=3600,line_searcher=line_searcher,log_verbosity=1)
+optimizer = optimizers.ConjugateGradient(max_iterations=300,min_step_size=1e-20,max_time=3600,line_searcher=line_searcher,log_verbosity=1,min_gradient_norm=1e-7)
 
 M = manifolds.Product([Gr,Gr])
 cost_troop, grad_troop, _ = troop_functions.create_objective_and_gradient(M,opt_obj,pool,fom)
@@ -168,25 +169,99 @@ costvec_tr = result.log["iterations"]["cost"]
 gradvec_tr = result.log["iterations"]["gradient_norm"]
 
 
+#%%
+plt.figure()
+plt.plot(itervec_tr,costvec_tr,color=cTR,linestyle=lTR,label='TrOOP')
+plt.plot(itervec_nit,costvec_nit,color=cOPT,linestyle=lOPT,label='NiTROM')
+
+ax = plt.gca()
+ax.set_yscale('log')
+ax.set_xlabel('Conj. gradient iteration')
+ax.set_ylabel('Cost')
+
+# ax.set_box_aspect(0.30)
+
+plt.legend()
+plt.tight_layout()
+
+# plt.savefig("Figures/convergence_plot_beta%d.eps"%beta,format='eps')
+
+
 #%% Compute OpInf model
 
-lam = np.logspace(-6.4,-3,num=100)
+# weights = pool.weights.copy()
+# pool.weights *= pool.n_traj*pool.n_snapshots
+
+lam = np.logspace(-8,-2,num=2000)
 cost_oi = []
 for (count,l) in enumerate(lam):
     tensors_opinf = opinf_fun.operator_inference(pool,Phi_pod,poly_comp,[0.0,l])
     point = (Phi_pod,Psi_pod) + tensors_opinf
     cost_oi.append(cost(*point))
 
+# pool.weights = weights
+
+#%%
 plt.figure()
 plt.plot(lam,cost_oi)
 
 #%%
 lambdas = [0.0,lam[np.argmin(cost_oi)]]
+print(np.min(cost_oi),lambdas)
 tensors_oi = opinf_fun.operator_inference(pool,Phi_pod,poly_comp,lambdas)
 
 #%%
+
+betas = np.random.uniform(0.0,0.999*max_val,size=100)
+t_eval = np.linspace(0,10,num=200)
+
+error_pod = np.zeros_like(t_eval)
+error_tr = np.zeros_like(t_eval)
+error_oi = np.zeros_like(t_eval)
+error_nit = np.zeros_like(t_eval)
+
+for k in range (len(betas)):
+    u = betas[k]*np.ones(3)
+    
+    
+    sol = solve_ivp(fom.evaluate_fom_dynamics,[0,time[-1]],np.zeros(3),'RK45',t_eval=t_eval,args=(u,)).y
+    id_ss = np.asarray([-betas[k]/(-1+4*betas[k]),-betas[k]/(-2+4*betas[k]),betas[k]/5])
+    weight = np.linalg.norm(fom.compute_output(id_ss))**2
+    
+    
+    sol_pod = Phi_pod@(solve_ivp(opt_obj.evaluate_rom_rhs,[0,time[-1]],np.zeros(r),'RK45',t_eval=t_eval,args=(Phi_pod.T@u,) + tensors_pod)).y
+    sol_tr = Phi_tr@(solve_ivp(opt_obj.evaluate_rom_rhs,[0,time[-1]],np.zeros(r),'RK45',t_eval=t_eval,args=(Psi_tr.T@u,) + tensors_tr)).y
+    sol_nit = Phi_nit@(solve_ivp(opt_obj.evaluate_rom_rhs,[0,time[-1]],np.zeros(r),'RK45',t_eval=t_eval,args=(Psi_nit.T@u,) + tensors_nit)).y
+    sol_oi = Phi_pod@(solve_ivp(opt_obj.evaluate_rom_rhs,[0,time[-1]],np.zeros(r),'RK45',t_eval=t_eval,args=(Phi_pod.T@u,) + tensors_oi)).y
+    
+    error_pod += np.linalg.norm(C@(sol_pod - sol),axis=0)**2/weight/len(betas)
+    error_tr += np.linalg.norm(C@(sol_tr - sol),axis=0)**2/weight/len(betas)
+    error_oi += np.linalg.norm(C@(sol_oi - sol),axis=0)**2/weight/len(betas)
+    error_nit += np.linalg.norm(C@(sol_nit - sol),axis=0)**2/weight/len(betas)
+    
+    
+
+plt.figure()
+plt.plot(t_eval,error_pod,color=cPOD,linestyle=lPOD,label='POD Gal.')
+plt.plot(t_eval,error_oi,color=cOI,linestyle=lOI,label='OpInf')
+plt.plot(t_eval,error_tr,color=cTR,linestyle=lTR,label='TrOOP')
+plt.plot(t_eval,error_nit,color=cOPT,linestyle=lOPT,label='NiTROM')
+
+
+ax = plt.gca()
+ax.set_xlabel('Time $t$')
+ax.set_ylabel('Average error $e(t)$')
+ax.set_yscale('log')
+
+plt.legend()
+plt.tight_layout()
+
+plt.savefig("Figures/testing_error_beta%d.eps"%beta,format='eps')
+    
+
+#%%
 tk = np.linspace(0,30,num=10000)
-uk = 0.5*(np.sin(tk) + np.cos(2*tk))
+uk = 0.45*(np.sin(tk) + np.cos(2*tk))
 
 t_eval = np.linspace(0,30,num=1000)
 
@@ -219,6 +294,14 @@ plt.plot(t_eval,fom.compute_output(sol_oi)[0,],color=cOI,linestyle=lOI,linewidth
 plt.plot(t_eval,fom.compute_output(sol_tr)[0,],color=cTR,linestyle=lTR,linewidth=2)
 plt.plot(t_eval,fom.compute_output(sol_nit)[0,],color=cOPT,linestyle=lOPT,linewidth=2)
 
+ax = plt.gca()
+ax.set_xlabel('Time $t$')
+ax.set_ylabel('$y(t)$')
+# ax.set_title('$u(t) = 0.45(\sin(t) + \cos(2t))$')
+
+plt.tight_layout()
+
+# plt.savefig("Figures/sinusoid_beta%d.eps"%beta,format='eps')
     
     
     

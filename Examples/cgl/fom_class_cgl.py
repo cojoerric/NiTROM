@@ -379,6 +379,31 @@ class time_step_cgl:
         return Q
         
         
+def balanced_truncation(cgl,cgl_tstep,Qbflow,nsave,r):
+    
+    nsnaps = len(cgl_tstep.time[::nsave])
+    Qfwd = np.zeros((cgl.B.shape[0],cgl.B.shape[-1]*nsnaps))
+    for k in range (cgl.B.shape[-1]):
+        print("Running forward %d/%d"%(k+1,cgl.B.shape[-1]))
+        idx0 = k*nsnaps
+        idx1 = (k+1)*nsnaps 
+        Qfwd[:,idx0:idx1] = cgl_tstep.time_step_linear_bt(cgl,Qbflow,cgl.B[:,k],nsave,'fwd')
+        
+    
+    Qadj = np.zeros((cgl.B.shape[0],cgl.C.shape[0]*nsnaps))
+    for k in range (cgl.C.shape[0]):
+        print("Running adjoint %d/%d"%(k+1,cgl.C.shape[0]))
+        idx0 = k*nsnaps
+        idx1 = (k+1)*nsnaps 
+        Qadj[:,idx0:idx1] = cgl_tstep.time_step_linear_bt(cgl,Qbflow,cgl.C[k,],nsave,'adj') 
+        
+    
+    u, s, v = sciplin.svd(Qadj.T@Qfwd,full_matrices=False) 
+    v = v.T
+    Phi = Qfwd@v[:,:r]@np.diag(1./np.sqrt(s[:r])) 
+    Psi = Qadj@u[:,:r]@np.diag(1./np.sqrt(s[:r]))  
+    
+    return Phi, Psi
         
                 
                 
