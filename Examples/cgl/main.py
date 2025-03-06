@@ -325,6 +325,4 @@ plt.plot(tsave,sol_pod[0,],color=cPOD,linestyle=lPOD,linewidth=2)
 plt.plot(tsave,sol_oi[0,],color=cOI,linestyle=lOI,linewidth=2)
 plt.plot(tsave,sol_nit[0,],color=cOPT,linestyle=lOPT,linewidth=2)
 plt.plot(tsave,sol_tr[0,],color=cTR,linestyle=lTR,linewidth=2)
-
-
-    
+plt.show()

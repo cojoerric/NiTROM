@@ -128,7 +128,7 @@ check_gradient(problem,x=[Phi_pod,Psi_pod,*tensors_pod])
 
 
 line_searcher = myAdaptiveLineSearcher(contraction_factor=0.5,sufficient_decrease=0.85,max_iterations=25,initial_step_size=1)
-optimizer = optimizers.ConjugateGradient(max_iterations=2000,min_step_size=1e-20,max_time=3600,line_searcher=line_searcher,log_verbosity=1)
+optimizer = optimizers.ConjugateGradient(max_iterations=500,min_step_size=1e-20,max_time=3600,line_searcher=line_searcher,log_verbosity=1)
 
 
 point = (Phi_pod,Psi_pod) + tensors_pod
@@ -297,11 +297,11 @@ plt.plot(t_eval,fom.compute_output(sol_nit)[0,],color=cOPT,linestyle=lOPT,linewi
 ax = plt.gca()
 ax.set_xlabel('Time $t$')
 ax.set_ylabel('$y(t)$')
-# ax.set_title('$u(t) = 0.45(\sin(t) + \cos(2t))$')
+ax.set_title('$u(t) = 0.45(\sin(t) + \cos(2t))$')
 
 plt.tight_layout()
 
-# plt.savefig("Figures/sinusoid_beta%d.eps"%beta,format='eps')
+plt.savefig("Figures/sinusoid_beta%d.eps"%beta,format='eps')
     
     
     
