@@ -191,7 +191,6 @@ class optimization_objects:
             Optional keyword arguments:
                 'forcing_interp':   a scipy interpolator f that gives us a forcing f(t)
         """
-        
         if np.linalg.norm(z) >= 1e4:    
             dzdt = 0.0*z 
         else:

@@ -15,16 +15,8 @@ from pymanopt.tools.diagnostics import check_gradient
 plt.rcParams.update({"font.family":"serif","font.sans-serif":["Computer Modern"],'font.size':18,'text.usetex':True})
 plt.rc('text.latex',preamble=r'\usepackage{amsmath}')
 
-sys.path.append("../../PyManopt_Functions/")
-sys.path.append("../../Optimization_Functions/")
-
-from my_pymanopt_classes import myAdaptiveLineSearcher
-
-
-import classes
-import nitrom_functions 
-import opinf_functions as opinf_fun
-import troop_functions
+from NiTROM.PyManopt_Functions.my_pymanopt_classes import myAdaptiveLineSearcher
+from NiTROM.Optimization_Functions import classes, nitrom_functions, opinf_functions as opinf_fun, troop_functions
 import fom_class
 
 
@@ -128,7 +120,7 @@ check_gradient(problem,x=[Phi_pod,Psi_pod,*tensors_pod])
 
 
 line_searcher = myAdaptiveLineSearcher(contraction_factor=0.5,sufficient_decrease=0.85,max_iterations=25,initial_step_size=1)
-optimizer = optimizers.ConjugateGradient(max_iterations=500,min_step_size=1e-20,max_time=3600,line_searcher=line_searcher,log_verbosity=1)
+optimizer = optimizers.ConjugateGradient(max_iterations=50,min_step_size=1e-20,max_time=3600,line_searcher=line_searcher,log_verbosity=1)
 
 
 point = (Phi_pod,Psi_pod) + tensors_pod
@@ -148,7 +140,7 @@ gradvec_nit = result.log["iterations"]["gradient_norm"]
 
 #%% Compute TrOOP model
 
-optimizer = optimizers.ConjugateGradient(max_iterations=300,min_step_size=1e-20,max_time=3600,line_searcher=line_searcher,log_verbosity=1,min_gradient_norm=1e-7)
+optimizer = optimizers.ConjugateGradient(max_iterations=50,min_step_size=1e-20,max_time=3600,line_searcher=line_searcher,log_verbosity=1,min_gradient_norm=1e-7)
 
 M = manifolds.Product([Gr,Gr])
 cost_troop, grad_troop, _ = troop_functions.create_objective_and_gradient(M,opt_obj,pool,fom)
