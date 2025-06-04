@@ -1,1 +1,0 @@
-/home/cole/Desktop/Research/Data/LinearAnalysis/NiTROM/NiTROM/Optimization_Functions/nitrom_functions.py

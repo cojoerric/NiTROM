@@ -58,7 +58,6 @@ def assemble_Z(mpi_pool,Phi,poly_comp):
                 idx = i*mpi_pool.n_snapshots + j
                 operands = [Phi.T@mpi_pool.X[i,:,j] for _ in range (p)]
                 Z_[:,idx] = (np.einsum(equation,*operands).reshape(-1))[idces]
-                
         if count == 0:  Z = Z_.copy()
         else:           Z = np.concatenate((Z,Z_),axis=0)
 
@@ -118,10 +117,10 @@ def operator_inference(mpi_pool,Phi,poly_comp,lambdas):
     W = assemble_W(mpi_pool)
     Y = assemble_Y(mpi_pool,Phi)
     Z = assemble_Z(mpi_pool,Phi,poly_comp)
+    print(Y.shape)
     P = assemble_P(r,poly_comp,lambdas)
     
     S = solve_least_squares_problem(mpi_pool,Z,Y,W,P)
-    print(np.linalg.norm(S))
     
     return extract_tensors(r,poly_comp,S)
     

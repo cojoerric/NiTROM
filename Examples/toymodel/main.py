@@ -27,13 +27,13 @@ lPOD, lOI, lTR, lOPT = 'solid', 'dotted', 'dashed', 'dashdot'
 #%% Instantiate the full-order model class
 
 n = 3 
-beta = 5
+beta = 20
 A2 = np.diag([-1,-2,-5])
 A3 = np.zeros((3,3,3))
 A3[:,:,-1] = np.diag([beta,beta,0.0])
 B = np.ones((3,1))
 C = np.ones((1,3))
-time = np.linspace(0,10,num=20)
+time = np.linspace(0,10,num=100)
 
 fom = fom_class.full_order_model(A2,A3,B,C)
 
@@ -91,6 +91,7 @@ poly_comp = [1,2]   # Model with a linear part and a quadratic part
 Phi_pod, _ = opinf_fun.perform_POD(pool,2)
 Psi_pod = Phi_pod.copy()
 tensors_pod, _ = fom.assemble_petrov_galerkin_tensors(Phi_pod,Psi_pod)
+print(tensors_pod[1])
 
 
 #%% Compute NiTROM model 
@@ -115,17 +116,17 @@ Euc_rrr = manifolds.Euclidean(r,r,r)
 M = manifolds.Product([Gr,St,Euc_rr,Euc_rrr])
 cost, grad, hess = nitrom_functions.create_objective_and_gradient(M,opt_obj,pool,fom)
 problem = pymanopt.Problem(M,cost,euclidean_gradient=grad)
-check_gradient(problem,x=[Phi_pod,Psi_pod,*tensors_pod])
+# check_gradient(problem,x=[Phi_pod,Psi_pod,*tensors_pod])
 # check_gradient(problem,x=result.point)
 
 
 line_searcher = myAdaptiveLineSearcher(contraction_factor=0.5,sufficient_decrease=0.85,max_iterations=25,initial_step_size=1)
-optimizer = optimizers.ConjugateGradient(max_iterations=50,min_step_size=1e-20,max_time=3600,line_searcher=line_searcher,log_verbosity=1)
+optimizer = optimizers.ConjugateGradient(max_iterations=2,min_step_size=1e-20,max_time=3600,line_searcher=line_searcher,log_verbosity=1)
 
 
 point = (Phi_pod,Psi_pod) + tensors_pod
 result = optimizer.run(problem,initial_point=point)
-check_gradient(problem,x=result.point)
+# check_gradient(problem,x=result.point)
 
 Phi_nit = result.point[0]
 Psi_nit = result.point[1]
@@ -140,7 +141,7 @@ gradvec_nit = result.log["iterations"]["gradient_norm"]
 
 #%% Compute TrOOP model
 
-optimizer = optimizers.ConjugateGradient(max_iterations=50,min_step_size=1e-20,max_time=3600,line_searcher=line_searcher,log_verbosity=1,min_gradient_norm=1e-7)
+optimizer = optimizers.ConjugateGradient(max_iterations=2,min_step_size=1e-20,max_time=3600,line_searcher=line_searcher,log_verbosity=1,min_gradient_norm=1e-7)
 
 M = manifolds.Product([Gr,Gr])
 cost_troop, grad_troop, _ = troop_functions.create_objective_and_gradient(M,opt_obj,pool,fom)
@@ -148,7 +149,7 @@ problem = pymanopt.Problem(M,cost_troop,euclidean_gradient=grad_troop)
 
 
 result = optimizer.run(problem,initial_point=(Phi_pod,Psi_pod))
-check_gradient(problem,x=result.point)
+# check_gradient(problem,x=result.point)
 
 Phi_tr = result.point[0]
 Psi_tr = result.point[1]
@@ -184,7 +185,7 @@ plt.tight_layout()
 # weights = pool.weights.copy()
 # pool.weights *= pool.n_traj*pool.n_snapshots
 
-lam = np.logspace(-8,-2,num=2000)
+lam = np.logspace(-8,-2,num=1)
 cost_oi = []
 for (count,l) in enumerate(lam):
     tensors_opinf = opinf_fun.operator_inference(pool,Phi_pod,poly_comp,[0.0,l])
@@ -205,7 +206,8 @@ tensors_oi = opinf_fun.operator_inference(pool,Phi_pod,poly_comp,lambdas)
 #%%
 
 betas = np.random.uniform(0.0,0.999*max_val,size=100)
-t_eval = np.linspace(0,10,num=200)
+# betas = [0.2]
+t_eval = np.linspace(0,10,num=100)
 
 error_pod = np.zeros_like(t_eval)
 error_tr = np.zeros_like(t_eval)
@@ -225,14 +227,12 @@ for k in range (len(betas)):
     sol_tr = Phi_tr@(solve_ivp(opt_obj.evaluate_rom_rhs,[0,time[-1]],np.zeros(r),'RK45',t_eval=t_eval,args=(Psi_tr.T@u,) + tensors_tr)).y
     sol_nit = Phi_nit@(solve_ivp(opt_obj.evaluate_rom_rhs,[0,time[-1]],np.zeros(r),'RK45',t_eval=t_eval,args=(Psi_nit.T@u,) + tensors_nit)).y
     sol_oi = Phi_pod@(solve_ivp(opt_obj.evaluate_rom_rhs,[0,time[-1]],np.zeros(r),'RK45',t_eval=t_eval,args=(Phi_pod.T@u,) + tensors_oi)).y
-    
     error_pod += np.linalg.norm(C@(sol_pod - sol),axis=0)**2/weight/len(betas)
     error_tr += np.linalg.norm(C@(sol_tr - sol),axis=0)**2/weight/len(betas)
     error_oi += np.linalg.norm(C@(sol_oi - sol),axis=0)**2/weight/len(betas)
     error_nit += np.linalg.norm(C@(sol_nit - sol),axis=0)**2/weight/len(betas)
     
-    
-
+print(error_pod[-1])
 plt.figure()
 plt.plot(t_eval,error_pod,color=cPOD,linestyle=lPOD,label='POD Gal.')
 plt.plot(t_eval,error_oi,color=cOI,linestyle=lOI,label='OpInf')

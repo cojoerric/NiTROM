@@ -18,11 +18,13 @@ import pymanopt.optimizers as optimizers
 
 sys.path.append("../../PyManopt_Functions/")
 sys.path.append("../../Optimization_Functions/")
+from NiTROM.Optimization_Functions import nitrom_functions, classes, opinf_functions as opinf_fun
+from NiTROM.PyManopt_Functions import my_pymanopt_classes
 
-from my_pymanopt_classes import myAdaptiveLineSearcher
-import nitrom_functions 
-import classes
-import opinf_functions as opinf_fun
+# from my_pymanopt_classes import myAdaptiveLineSearcher
+# import nitrom_functions 
+# import classes
+# import opinf_functions as opinf_fun
 
 #%%
 

@@ -36,79 +36,100 @@ def assemble_P(pool, lambdas):
         P[shift:shift + rp] = lambdas[count]
         shift += rp
     
-    P_petsc = PETSc.Mat().createAIJ((pool.rps, pool.rps), comm=pool.comm)
-    start, end = P_petsc.getOwnershipRange()
-    for i in range(start, end):
-        P_petsc.setValue(i, i, P[i])
-    P_petsc.assemble()
-    return P_petsc
+    p_petsc = PETSc.Vec().createWithArray(P, pool.rps, comm=pool.comm)
+    p_petsc.setType('mpi')
+    return p_petsc
 
-def solve_least_squares_problem_petsc4py(pool, Z, Y_T, W, P):
-    A_1 = W.matTransposeMult(Z)
-    A = Z.matMult(A_1)
-    A.axpy(1, P)
 
-    res4py.petscprint(pool.comm, "Computing SVD of A")
-    t = time.time()
-    svd = SLEPc.SVD().create(pool.comm)
-    svd.setOperators(A)
-    svd.setType('scalapack')
-    svd.solve()
-    t2 = time.time() - t
-    res4py.petscprint(pool.comm, f"SVD computation time: {t2:.2f} seconds")
+def solve_least_squares_problem_petsc4py(pool, Z, Y_T, w, p):
+    # Z.transpose()
+    # A_1 = Z.copy()
+    # Z.transpose()
+    # A_1.diagonalScale(w, None)
+    # A = Z.matMult(A_1)
+    # A_1.destroy()
+    # A.setDiagonal(p, addv=PETSc.InsertMode.ADD_VALUES)
+    # p.destroy()
 
-    nconv = svd.getConverged()
-    res4py.petscprint(pool.comm, f"Number of converged singular values: {nconv}")
+    # res4py.petscprint(pool.comm, "Computing SVD of A")
+    # t = time.time()
+    # svd = SLEPc.SVD().create(pool.comm)
+    # svd.setOperators(A)
+    # svd.setType('scalapack')
+    # svd.solve()
+    # t2 = time.time() - t
+    # res4py.petscprint(pool.comm, f"SVD computation time: {t2:.2 f} seconds")
 
-    s_inv = []
-    U_vectors = []
-    V_vectors = []
+    # nconv = svd.getConverged()
+    # res4py.petscprint(pool.comm, f"Number of converged singular values: {nconv}")
 
-    for i in range(nconv):
-        u = A.createVecLeft()
-        v = A.createVecRight()
-        s = svd.getSingularTriplet(i, u, v)
-        if s > 1e-12:
-            s_inv.append(1.0/s)
-            U_vectors.append(u)
-            V_vectors.append(v)
+    # s_inv = []
+    # U_vectors = []
+    # V_vectors = []
 
-    # Form matrices U, S, and V
-    U = PETSc.Mat().createAIJ((pool.rps, len(U_vectors)), comm=pool.comm)
-    V = PETSc.Mat().createAIJ((pool.rps, len(V_vectors)), comm=pool.comm)
-    S = PETSc.Mat().createAIJ((len(s_inv), len(s_inv)), comm=pool.comm)
+    # for i in range(nconv):
+    #     u = A.createVecLeft()
+    #     v = A.createVecRight()
+    #     s = svd.getSingularTriplet(i, u, v)
+    #     if s > 1e-12:
+    #         s_inv.append(1.0/s)
+    #         U_vectors.append(u)
+    #         V_vectors.append(v)
+    # svd.destroy()
 
-    row_u_start, row_u_end = U.getOwnershipRange()
-    row_s_start, row_s_end = S.getOwnershipRange()
-    row_v_start, row_v_end = V.getOwnershipRange()
-    kept = 0
-    for i in range(len(s_inv)):
-        u = U_vectors[i]; s = s_inv[i]; v = V_vectors[i]
+    # # Form matrices U, S, and V
+    # U = PETSc.Mat().createDense((pool.rps, len(U_vectors)), comm=pool.comm)
+    # V = PETSc.Mat().createDense((pool.rps, len(V_vectors)), comm=pool.comm)
+    # S = PETSc.Vec().create(len(s_inv), comm=pool.comm)
+    # S.setType('seq')
 
-        u_arr = u.getArray()
-        U.setValues(range(row_u_start,row_u_end), [kept], u_arr)
+    # row_u_start, row_u_end = U.getOwnershipRange()
+    # row_v_start, row_v_end = V.getOwnershipRange()
+    # for i in range(len(s_inv)):
+    #     u = U_vectors[i]; s = s_inv[i]; v = V_vectors[i]
 
-        v_arr = v.getArray()
-        V.setValues(range(row_v_start, row_v_end), [kept], v_arr)
+    #     u_arr = u.getArray()
+    #     U.setValues(range(row_u_start,row_u_end), [i], u_arr)
 
-        if row_s_start <= kept < row_s_end:
-            S.setValue(kept, kept, s)
-        kept += 1
+    #     v_arr = v.getArray()
+    #     V.setValues(range(row_v_start, row_v_end), [i], v_arr)
 
-    res4py.petscprint(pool.comm, f"Number of singular values kept: {kept}")
+    #     S.setValue(i, s)
 
-    U.assemble()
-    S.assemble()
-    V.assemble()
+    # res4py.petscprint(pool.comm, f"Number of singular values kept: {len(s_inv)}")
 
-    US = U.matMult(S)
-    A_inv = US.matTransposeMult(V)
+    # U.assemble()
+    # V.assemble()
 
-    U.destroy(); V.destroy(); S.destroy(); US.destroy(); A.destroy()
+    # U.diagonalScale(None, S)
+    # A_inv = U.matTransposeMult(V)
 
-    M1 = Y_T.transposeMatMult(W)
-    M2 = M1.matTransposeMult(Z)
-    M = M2.matMult(A_inv)
-    M1.destroy(); M2.destroy(); A_inv.destroy()
+    # U.destroy(); V.destroy(); S.destroy(); A.destroy()
+
+    P = PETSc.Mat().createAIJ((pool.rps, pool.rps), comm=pool.comm)
+    P.setDiagonal(p)
+    P.assemble()
+    ksp = res4py.create_mumps_solver(pool.comm, P)
+    A = res4py.MatrixLinearOperator(pool.comm, P, ksp)
+    # B = ZW, K = I, C = Z
+    B_mat = Z.copy()
+    B_mat.diagonalScale(None, w)
+    B = SLEPc.BV().createFromMat(B_mat)
+    B.setType('mat')
+    B_mat.destroy()
+    K = np.identity(pool.n_snap)
+    C = SLEPc.BV().createFromMat(Z)
+    C.setType('mat')
+    
+    L = res4py.LowRankUpdatedLinearOperator(pool.comm, A, B, K, C)
+    res4py.petscprint(pool.comm, "Computing SVD ...")
+    U, S, V = res4py.randomized_svd(L, L.solve_mat, 100*10, 2, 100)
+    print(1/S.diagonal())
+
+    Y_T.transpose()
+    Y_T.diagonalScale(None, w)
+    M1 = Y_T.matTransposeMult(Z)
+    M = M1.matMult(A_inv)
+    M1.destroy(); A_inv.destroy()
     
     return M
