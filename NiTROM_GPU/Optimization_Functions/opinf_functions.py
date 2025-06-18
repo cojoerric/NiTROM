@@ -3,11 +3,6 @@ import scipy as sp
 import math
 from string import ascii_lowercase as ascii
 
-import pymanopt
-import pymanopt.manifolds as manifolds
-import pymanopt.optimizers as optimizers
-from NiTROM.PyManopt_Functions.my_pymanopt_classes import myAdaptiveLineSearcher
-
 
 def compute_indices(c_ls=[], c=0, idx=5, r=5, order=0):
     
@@ -63,7 +58,6 @@ def assemble_Z(mpi_pool,Phi,poly_comp):
                 idx = i*mpi_pool.n_snapshots + j
                 operands = [Phi.T@mpi_pool.X[i,:,j] for _ in range (p)]
                 Z_[:,idx] = (np.einsum(equation,*operands).reshape(-1))[idces]
-                
         if count == 0:  Z = Z_.copy()
         else:           Z = np.concatenate((Z,Z_),axis=0)
 
@@ -100,99 +94,32 @@ def extract_tensors(r,poly_comp,S):
         shift += rp
     
     return tuple(tensors)
-
-
-def compact_tensors(r,poly_comp,tensors):
-    
-    S = []
-    for p, T in zip(poly_comp,tensors):
-        
-        rp = math.comb(r+p-1,p)
-        idces = compute_indices([],0,r,r,p-1)
-        
-        T_flat = T.reshape(r,-1)
-        S_p = np.zeros((r,rp))
-        S_p[:,:len(idces)] = T_flat[:,idces]
-        S.append(S_p)
-    
-    return np.hstack(S)
     
         
-def solve_least_squares_problem(mpi_pool,Z,Y,W,P,initial_point):
-    dim1 = Y.shape[0]; dim2 = Z.shape[0]
-    manifold = manifolds.Euclidean(dim1,dim2)
-    if not initial_point:
-        initial_point = manifold.random_point()
-
-    W_diag = np.diag(W)
-    W_diag_sqrt = np.sqrt(W_diag)
-    W_sqrt = np.diag(W_diag_sqrt)
-
-    P_diag = np.diag(P)
-    P_diag_sqrt = np.sqrt(P_diag)
-    P_sqrt = np.diag(P_diag_sqrt)
-
-    @pymanopt.function.numpy(manifold)
-    def cost(M):
-        return np.linalg.norm((Y-M@Z)@W_sqrt, 'fro')**2 + np.linalg.norm(M@P_sqrt, 'fro')**2
+def solve_least_squares_problem(mpi_pool,Z,Y,W,P):
     
-    @pymanopt.function.numpy(manifold)
-    def grad(M):
-        return 2*M@(Z@W@Z.T + P) - 2*Y@W@Z.T
+    """
+        Solves the weighted least squares problem with L2 regularization. 
+        The solution is M = Y@W@Z.T@inv(Z@W@Z.T + P)
+    """
+
+    u, s, _ = sp.linalg.svd(Z@W@Z.T + P)
+    idces = np.argwhere(s > 1e-12).reshape(-1)
     
-    line_searcher = myAdaptiveLineSearcher(contraction_factor=0.5,sufficient_decrease=0.5,max_iterations=25,initial_step_size=1)
-    problem = pymanopt.Problem(manifold, cost=cost, euclidean_gradient=grad)
-    
-    optimizer = optimizers.ConjugateGradient(max_iterations=30,min_step_size=1e-20,max_time=3600,log_verbosity=1)
-    result = optimizer.run(problem,initial_point=initial_point)
-    S = result.point
-    
-    return S
+    return Y@W@Z.T@u[:,idces]@np.diag(1./s[idces])@(u[:,idces]).T
 
 
-def test_gradient_finite_diff(mpi_pool,Z,Y,W,P):
-    dim1 = Y.shape[0]; dim2 = Z.shape[0]
-    manifold = manifolds.Euclidean(dim1,dim2)
-    S = manifold.random_point()
 
-    W_diag = np.diag(W)
-    W_diag_sqrt = np.sqrt(W_diag)
-    W_sqrt = np.diag(W_diag_sqrt)
-
-    P_diag = np.diag(P)
-    P_diag_sqrt = np.sqrt(P_diag)
-    P_sqrt = np.diag(P_diag_sqrt)
-
-    def cost(M):
-        return np.linalg.norm((Y-M@Z)@W_sqrt,'fro')**2 + np.linalg.norm(M@P_sqrt,'fro')**2
-    
-    def grad(M):
-        return 2*M@(Z@W@Z.T + P) - 2*Y@W@Z.T
-
-    eps = 1e-6
-    delta = np.random.randn(*S.shape)
-    delta = delta/np.sqrt(np.trace(delta.T@delta))
-    grad_num = (1/(2*eps))*(cost(S+eps*delta)-cost(S-eps*delta))
-    grad_ana = np.trace(delta.T@grad(S))
-    err_grad = 100*np.abs(grad_num-grad_ana)/np.abs(grad_num)
-    
-    return err_grad
-
-
-def operator_inference(mpi_pool,Phi,poly_comp,lambdas,initial_point=None):
+def operator_inference(mpi_pool,Phi,poly_comp,lambdas):
     
     n, r = Phi.shape
     
     W = assemble_W(mpi_pool)
     Y = assemble_Y(mpi_pool,Phi)
     Z = assemble_Z(mpi_pool,Phi,poly_comp)
+    print(Y.shape)
     P = assemble_P(r,poly_comp,lambdas)
     
-    err_grad = test_gradient_finite_diff(mpi_pool,Z,Y,W,P)
-    print("Gradient error:",err_grad)
-    initial_S = compact_tensors(r,poly_comp,initial_point) if initial_point is not None else None
-    S = solve_least_squares_problem(mpi_pool,Z,Y,W,P,initial_S)
+    S = solve_least_squares_problem(mpi_pool,Z,Y,W,P)
     
     return extract_tensors(r,poly_comp,S)
-    
-  

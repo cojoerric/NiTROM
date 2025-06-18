@@ -1,15 +1,16 @@
 from setuptools import setup, find_packages
 
 setup(
-    name='NiTROM',
+    name='NiTROM_GPU',
     version='0.1.0',
-    packages=find_packages(include=['NiTROM', 'NiTROM.*']),
+    packages=find_packages(include=['NiTROM_GPU', 'NiTROM_GPU.*']),
     install_requires=[
         'numpy', 
         'scipy',
         'numba',
         'pymanopt',
-        'matplotlib'
+        'matplotlib',
+        'torch'
     ],
     description='Non-intrusive Trajectory-based Reduced-Order Modelling',
     long_description=open('README.md').read(),
@@ -24,4 +25,3 @@ setup(
     ],
     python_requires='>=3.6',
 )
-

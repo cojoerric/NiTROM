@@ -1,20 +1,18 @@
-import numpy as np 
+import numpy as np
+import torch
 from mpi4py import MPI
 from itertools import combinations
 from string import ascii_lowercase as ascii
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-class mpi_pool:
+class pool:
 
-    def __init__(self,comm,n_traj,fname_traj,fname_time,**kwargs):
+    def __init__(self,n_traj,fname_traj,fname_time,**kwargs):
         
         """ 
-        This class contains all the info regarding the MPI pool that will be used 
-        during optimization. It also loads the training data from disk. Every process
-        (with Id "self.rank") owns its own instance of this class and its own chunk of 
-        the training data. I.e., the whole training data set is distributed
-        across the whole MPI pool.  
+        This class contains all the info regarding the pool that will be used 
+        during optimization. It also loads the training data from disk.
         
-        comm:           MPI Communicator
         n_traj:         total number of trajectories we wish to load from disk
         fname_traj:     e.g., 'traj_%03d.npy' (string used to load each trajectory)
         fname_time:     e.g., 'time.txt' (time vector at which we save snapshots)
@@ -25,30 +23,12 @@ class mpi_pool:
             fname_derivs:           e.g., 'fname_derivs_%03d.npy'
         """
 
-        self.comm = comm                            # MPI communicator
-        self.size = self.comm.Get_size()            # Total number of processes
-        self.rank = self.comm.Get_rank()            # Id of the current process
-
-        self.n_traj = n_traj                        # Total number of training trajectories
-        if self.size > self.n_traj:
-            raise ValueError ("You have more MPI processes than trajectories!")
-        else:
-            if self.rank == 0:
-                print("Hello, you are running NiTROM with %d MPI processors."%self.size)
-        
-        self.my_n_traj = self.n_traj//self.size     # Number of trajectories owned by process self.rank
-        self.my_n_traj += 1 if np.mod(self.n_traj,self.size) > self.rank else 0
-
-
-        # Vectors used for future MPI communications
-        self.counts = np.zeros(self.size,dtype=np.int64)    
-        self.comm.Allgather([np.asarray([self.my_n_traj]),MPI.INT],[self.counts,MPI.INT])
-        self.disps = np.concatenate(([0],np.cumsum(self.counts)[:-1])) 
-        
+        self.n_traj = n_traj                        # Total number of training trajectories        
         
         # Load data from file
         self.load_trajectories(fname_traj)
-        self.time = np.load(fname_time)
+        time = np.load(fname_time)
+        self.time = torch.from_numpy(time).to(device)
         self.load_weights(kwargs)
         self.load_steady_forcing(kwargs)
         self.load_time_derivatives(kwargs)
@@ -56,50 +36,53 @@ class mpi_pool:
         
     def load_trajectories(self,fname_traj):
         
-        self.fnames_traj = [fname_traj%(k+self.disps[self.rank]) for k in range (self.my_n_traj)]
-        X = [np.load(self.fnames_traj[k]) for k in range (self.my_n_traj)]
+        self.fnames_traj = [fname_traj%k for k in range (self.n_traj)]
+        X = [np.load(self.fnames_traj[k]) for k in range (self.n_traj)]
         self.N, self.n_snapshots = X[0].shape
-        self.X = np.zeros((self.my_n_traj,self.N,self.n_snapshots))
-        for k in range (self.my_n_traj): self.X[k,] = X[k]
+        X2 = np.zeros((self.n_traj,self.N,self.n_snapshots))
+        for k in range (self.n_traj): X2[k,] = X[k]
+        self.X = torch.from_numpy(X2).to(device)
         
     def load_weights(self,kwargs):
         
         fname_weights = kwargs.get('fname_weights',None)
-        self.weights = np.ones(self.my_n_traj)
+        weights2 = np.ones(self.n_traj)
         if fname_weights != None:
-            self.fnames_weights = [fname_weights%(k+self.disps[self.rank]) for k in range (self.my_n_traj)]
-            weights = [np.load(self.fnames_weights[k]) for k in range (self.my_n_traj)]
-            self.weights = np.zeros(self.my_n_traj)
-            for k in range (self.my_n_traj): self.weights[k] = weights[k]
+            self.fnames_weights = [fname_weights%k for k in range (self.n_traj)]
+            weights = [np.load(self.fnames_weights[k]) for k in range (self.n_traj)]
+            for k in range (self.n_traj): weights2[k] = weights[k]
+        self.weights = torch.from_numpy(weights2).to(device)
             
     def load_steady_forcing(self,kwargs):
         
         fname_forcing = kwargs.get('fname_steady_forcing',None)
-        self.F = np.zeros((self.N,self.my_n_traj))
+        F = np.zeros((self.N,self.n_traj))
         if fname_forcing != None:
-            self.fnames_forcing = [(fname_forcing)%(k+self.disps[self.rank]) for k in range (self.my_n_traj)]
-            for k in range (self.my_n_traj):  self.F[:,k] = np.load(self.fnames_forcing[k])
+            self.fnames_forcing = [(fname_forcing)%k for k in range (self.n_traj)]
+            for k in range (self.n_traj):  F[:,k] = np.load(self.fnames_forcing[k])
+        self.F = torch.from_numpy(F).to(device)
     
     def load_time_derivatives(self,kwargs):
         
         fname_deriv = kwargs.get('fname_derivs',None)
         if fname_deriv != None:
-            self.fnames_deriv = [fname_deriv%(k+self.disps[self.rank]) for k in range (self.my_n_traj)]
-            dX = [np.load(self.fnames_deriv[k]) for k in range (self.my_n_traj)]
-            self.dX = np.zeros((self.my_n_traj,self.N,self.n_snapshots))
-            for k in range (self.my_n_traj): self.dX[k,] = dX[k]
+            self.fnames_deriv = [fname_deriv%k for k in range (self.n_traj)]
+            dX = [np.load(self.fnames_deriv[k]) for k in range (self.n_traj)]
+            dX2 = np.zeros((self.n_traj,self.N,self.n_snapshots))
+            for k in range (self.n_traj): dX2[k,] = dX[k]
+            self.dX = torch.from_numpy(dX2).to(device)
         
 class optimization_objects:
 
-    def __init__(self,mpi_pool,which_trajs,which_times,leggauss_deg,nsave_rom,poly_comp,**kwargs):
+    def __init__(self,pool,which_trajs,which_times,leggauss_deg,nsave_rom,poly_comp,**kwargs):
 
         """ 
         This class contains the training data information that will get passed to pymanopt. 
         
-        mpi_pool:       an instance of the mpi_pool class
+        pool:           an instance of the pool class
         which_trajs:    array of integers to extract a subset of the trajectories contained in 
-                        mpi_pool.X. Useful if we end up using stochastic gradient descent
-        which_times:    arrays of integers to extract a subset of a trajectory owned by mpi_pool. Useful
+                        pool.X. Useful if we end up using stochastic gradient descent
+        which_times:    arrays of integers to extract a subset of a trajectory owned by pool. Useful
                         if we want to start training on short trajectories and then progressively extend 
                         the length of the trajectories
         leggauss_deg:   number of Gauss-Legendre quadrature points used to approximate the integrals
@@ -116,13 +99,13 @@ class optimization_objects:
         """
         
         
-        self.X = mpi_pool.X[which_trajs,:,:]      
+        self.X = pool.X[which_trajs,:,:]      
         self.X = self.X[:,:,which_times]
-        self.F = mpi_pool.F[:,which_trajs]
-        self.time = mpi_pool.time[which_times]
-        self.weights = mpi_pool.weights[which_trajs]
+        self.F = pool.F[:,which_trajs]
+        self.time = pool.time[which_times]
+        self.weights = pool.weights[which_trajs]
 
-        self.my_n_traj, _, self.n_snapshots = self.X.shape
+        self.n_traj, _, self.n_snapshots = self.X.shape
         self.leggauss_deg = leggauss_deg
         self.nsave_rom = nsave_rom
         self.poly_comp = poly_comp
@@ -131,11 +114,8 @@ class optimization_objects:
         
         # Count the total number of trajectories in this batch and
         # scale the weight accordingly so that the cost function measures
-        # the average error over snapshots and trajectories. (Notice that 
-        # if all trajectories are loaded, then np.sum(counts) = mpi_pool.n_traj)
-        counts = np.zeros(mpi_pool.size,dtype=np.int64)
-        mpi_pool.comm.Allgather([np.asarray([self.my_n_traj]),MPI.INT],[counts,MPI.INT])
-        self.weights *= np.sum(counts)*self.n_snapshots
+        # the average error over snapshots and trajectories.
+        self.weights *= len(which_trajs)*self.n_snapshots
         
         # Parse the keyword arguments
         self.which_fix = kwargs.get('which_fix','fix_none')
@@ -160,7 +140,7 @@ class optimization_objects:
                               in the rom dynamics. You have no linear term.")
                               
         if self.randic != None: 
-            self.randic /= np.linalg.norm(self.randic)
+            self.randic /= torch.linalg.vector_norm(self.randic)
             self.randic = self.randic.reshape(-1)
             
         
@@ -182,44 +162,44 @@ class optimization_objects:
 
     def evaluate_rom_rhs(self,t,z,u,*operators,**kwargs):
         """
-            Function that can be fed into scipys solve_ivp. 
+            Function that can be fed into a PyTorch integrator routine. 
             t:          time instance
             z:          state vector
             u:          a steady forcing vector
             operators:  (A2,A3,A4,...)
             
             Optional keyword arguments:
-                'forcing_interp':   a scipy interpolator f that gives us a forcing f(t)
+                'forcing_interp':   a PyTorch interpolator f that gives us a forcing f(t)
         """
-        if np.linalg.norm(z) >= 1e4:    
+        if torch.linalg.vector_norm(z) >= 1e4:    
             dzdt = 0.0*z 
         else:
             f = kwargs.get('forcing_interp',None)
-            f = f(t) if f != None else np.zeros(len(z))
-            u = u.copy() if hasattr(u,"__len__") == True else u(t)
+            f = f(t) if f != None else torch.zeros(len(z), device=device)
+            u = u.clone().detach() if hasattr(u,"__len__") == True else u(t)
             dzdt = u + f
             for (i, k) in enumerate(self.poly_comp):
                 equation = ",".join(self.einsum_ss[i])
                 operands = [operators[i]] + [z for _ in range(k)]
-                dzdt += np.einsum(equation,*operands)
+                dzdt += torch.einsum(equation,*operands)
         
         return dzdt
     
     
     def evaluate_rom_adjoint(self,t,z,fq,*operators):
         """
-            Function that can be fed into scipys solve_ivp. 
+            Function that can be fed into a PyTorch integrator routine. 
             t:          time instance
             z:          state vector
-            fq:         interpolator (from scipy.interpolate) to evaluate the
+            fq:         PyTorch interpolator to evaluate the
                         base flow at time t
             operators:  (A2,A3,A4,...)
         """
         
-        if np.linalg.norm(z) >= 1e4:
+        if torch.linalg.vector_norm(z) >= 1e4:
             dzdt = 0.0*z
         else:
-            J = np.zeros((len(z),len(z)))
+            J = torch.zeros((len(z),len(z)),device=device)
             for (i, k) in enumerate(self.poly_comp):
                 
                 combs = list(combinations(self.einsum_ss[i][1:],r=k-1))
@@ -228,22 +208,8 @@ class optimization_objects:
                     equation = [self.einsum_ss[i][0]] + list(comb)
                     equation = ",".join(equation)
                     
-                    J += np.einsum(equation,*operands)
+                    J += torch.einsum(equation,*operands)
                     
-            dzdt = J.T@z 
+            dzdt = J.T@z
             
         return dzdt
-    
-    
-        
-    
-
-        
-        
-        
-        
-        
-        
-        
-        
-        
