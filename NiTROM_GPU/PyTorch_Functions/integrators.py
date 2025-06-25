@@ -12,6 +12,7 @@ def rk4_step(fun, t, x, dt, args=()):
     x_new = x + (dt / 6) * (k1 + 2 * k2 + 2 * k3 + k4)
     return x_new
 
+@torch.compile
 def myRK4(fun, t_vec, x0, args=(), *, atol=1e-6, rtol=1e-3, safety_factor=0.8, fac_min=0.1, fac_max=5.0):
     """
     Integrates a system of ordinary differential equations using an adaptive fourth-order Runge-Kutta (RK4) method.
@@ -52,5 +53,35 @@ def myRK4(fun, t_vec, x0, args=(), *, atol=1e-6, rtol=1e-3, safety_factor=0.8, f
             dt_new = dt_trial * safety_factor * (1.0/err)**exponent
             dt = torch.clamp(dt_new, min=dt*fac_min, max=dt*fac_max)
         xs[:, i] = x
+
+    return xs
+
+
+@torch.compile
+def my_cnab2(linop, fun_nonlinear, t_vec, x0, args=()):
+    dt = t_vec[1] - t_vec[0]
+    dt_half = 0.5 * dt
+    x_curr = x0.clone().detach()
+    t_curr = t_vec[0]
+    N_prev = fun_nonlinear(t_curr, x_curr, *args)
+
+    I = torch.eye(len(x0), dtype=x0.dtype, device=x0.device)
+    A = I - dt_half * linop
+    B = I + dt_half * linop
+    LU, pivots, _ = torch.linalg.lu_factor_ex(A)
+
+    xs = torch.zeros((len(x0), len(t_vec)), dtype=x0.dtype, device=x0.device)
+    xs[:, 0] = x_curr
+
+    for i, t_next in enumerate(t_vec[1:], start=1):
+        N_curr = fun_nonlinear(t_curr, x_curr, *args)
+        rhs = B @ x_curr + dt_half * (3 * N_curr - N_prev)
+        rhs = rhs.unsqueeze(-1)
+        x_next = torch.linalg.lu_solve(LU, pivots, rhs).squeeze(-1)
+        xs[:, i] = x_next
+
+        t_curr = t_next
+        x_curr = x_next
+        N_prev = N_curr
 
     return xs

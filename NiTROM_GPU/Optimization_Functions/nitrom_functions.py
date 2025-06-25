@@ -5,7 +5,7 @@ from string import ascii_lowercase as ascii
 import pymanopt
 
 import time as tlib
-from ..PyTorch_Functions.rk4_integrator import myRK4
+from ..PyTorch_Functions.integrators import myRK4, my_cnab2
 from ..PyTorch_Functions.linear_interpolation import Interp1D
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -43,8 +43,10 @@ def create_objective_and_gradient(manifold,opt_obj,pool,fom):
             # specified by the last snapshot in the training trajectory
             z0 = Psi.T@opt_obj.X[k,:,0]
             u = Psi.T@opt_obj.F[:,k]
-            sol = myRK4(opt_obj.evaluate_rom_rhs, opt_obj.time, z0, args=(u,) + tensors)
-            # print(sol[:,-1])
+            # sol = myRK4(opt_obj.evaluate_rom_rhs, opt_obj.time, z0, args=(u,) + tensors)
+            sol = my_cnab2(tensors[0], opt_obj.evaluate_rom_rhs_nonlinear, opt_obj.time, z0, args=(u,) + tensors)
+            energy = torch.linalg.vector_norm(sol,dim=0)
+            torch.save(energy, 'e_torch2.pt')
             e = fom.compute_output(opt_obj.X[k,:,:]) - fom.compute_output(PhiF@sol)
             J += (1./opt_obj.weights[k])*torch.trace(e.T@e)
         

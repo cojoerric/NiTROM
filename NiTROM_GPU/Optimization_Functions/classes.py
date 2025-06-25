@@ -176,9 +176,35 @@ class optimization_objects:
         else:
             f = kwargs.get('forcing_interp',None)
             f = f(t) if f != None else torch.zeros(len(z), device=device)
-            u = u.clone().detach() if hasattr(u,"__len__") == True else u(t)
+            u = u.clone().detach() if isinstance(u,torch.Tensor) else u(t)
             dzdt = u + f
             for (i, k) in enumerate(self.poly_comp):
+                equation = ",".join(self.einsum_ss[i])
+                operands = [operators[i]] + [z for _ in range(k)]
+                dzdt += torch.einsum(equation,*operands)
+        
+        return dzdt
+    
+
+    def evaluate_rom_rhs_nonlinear(self,t,z,u,*operators,**kwargs):
+        """
+            Function that can be fed into a PyTorch integrator routine (nonlinear terms only). 
+            t:          time instance
+            z:          state vector
+            u:          a steady forcing vector
+            operators:  (A2,A3,A4,...)
+            
+            Optional keyword arguments:
+                'forcing_interp':   a PyTorch interpolator f that gives us a forcing f(t)
+        """
+        if torch.linalg.vector_norm(z) >= 1e4:    
+            dzdt = 0.0*z 
+        else:
+            f = kwargs.get('forcing_interp',None)
+            f = f(t) if f != None else torch.zeros(len(z), device=device)
+            u = u.clone().detach() if isinstance(u,torch.Tensor) else u(t)
+            dzdt = u + f
+            for (i, k) in enumerate(self.poly_comp[1:], start=1):
                 equation = ",".join(self.einsum_ss[i])
                 operands = [operators[i]] + [z for _ in range(k)]
                 dzdt += torch.einsum(equation,*operands)
