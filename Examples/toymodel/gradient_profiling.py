@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import time
 
 import pymanopt.manifolds as manifolds
+from NiTROM_GPU.PyTorch_Functions import gpu_utils
 
 import cProfile, pstats
 pr = cProfile.Profile()
@@ -13,10 +14,9 @@ plt.rc('text.latex',preamble=r'\usepackage{amsmath}')
 
 from NiTROM_GPU.Optimization_Functions import classes, nitrom_functions
 import fom_class_pytorch
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.set_printoptions(precision=8)
 
-
+device, rank, world_size = gpu_utils.setup_distributed_gpus()
 n = 3
 n_traj = 4
 beta = 20.0
@@ -38,7 +38,13 @@ fname_deriv = traj_path + "deriv_%03d.npy"
 fname_time = traj_path + "time.npy"
 
 pool_inputs = (n_traj, fname_traj, fname_time)
-pool_kwargs = {'fname_steady_forcing':fname_forcing,'fname_weights':fname_weight,'fname_derivs':fname_deriv}
+pool_kwargs = {'fname_steady_forcing':fname_forcing,
+               'fname_weights':fname_weight,
+               'fname_derivs':fname_deriv,
+               'device':device,
+               'rank':rank,
+               'world_size':world_size
+}
 pool = classes.pool(*pool_inputs,**pool_kwargs)
 
 r = 2               # ROM dimension
@@ -50,9 +56,9 @@ poly_comp = [1,2]   # Model with a linear part and a quadratic part
 which_trajs = torch.arange(0,pool.n_traj,1)
 which_times = torch.arange(0,pool.n_snapshots,1)
 leggauss_deg = 5
-nsave_rom = 3
+nsave_rom = 2
 
-opt_obj_inputs = (pool,which_trajs,which_times,leggauss_deg,nsave_rom,[1,2])
+opt_obj_inputs = (pool,which_trajs,which_times,leggauss_deg,nsave_rom,poly_comp)
 
 opt_obj = classes.optimization_objects(*opt_obj_inputs)
 
@@ -91,3 +97,4 @@ print("Gradient norm:", norm)
 pr.dump_stats("gradient_profiling.prof")
 stats = pstats.Stats(pr).sort_stats('cumtime')
 stats.print_stats(20)   # top 20 slowest functions
+gpu_utils.cleanup_distributed()

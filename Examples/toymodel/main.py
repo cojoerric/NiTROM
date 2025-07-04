@@ -22,7 +22,7 @@ lPOD, lOI, lTR, lOPT = 'solid', 'dotted', 'dashed', 'dashdot'
 
 device, rank, world_size = gpu_utils.setup_distributed_gpus()
 if rank == 0:
-    print(f"Using {world_size} GPUs for distributed training.")
+    print(f"Using {world_size} GPU(s) for distributed training.")
 
 n = 3
 n_traj = 4
@@ -62,7 +62,7 @@ poly_comp = [1,2]   # Model with a linear part and a quadratic part
 which_trajs = torch.arange(0,pool.n_traj,1)
 which_times = torch.arange(0,pool.n_snapshots,1)
 leggauss_deg = 5
-nsave_rom = 10
+nsave_rom = 2
 
 opt_obj_inputs = (pool,which_trajs,which_times,leggauss_deg,nsave_rom,poly_comp)
 opt_obj = classes.optimization_objects(*opt_obj_inputs)
