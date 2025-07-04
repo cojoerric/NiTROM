@@ -116,24 +116,41 @@ class optimization_objects:
             stab_promoting_ic:      random (unit-norm) vector to probe the stability penalty
         """
         
-        
-        self.X = pool.X[which_trajs,:,:]      
-        self.X = self.X[:,:,which_times]
-        self.F = pool.F[:,which_trajs]
-        self.time = pool.time[which_times]
-        self.weights = pool.weights[which_trajs]
+        self.pool = pool
 
-        self.n_traj, _, self.n_snapshots = self.X.shape
+        local_which_trajs = self._global_to_local_indices(which_trajs,pool)
+        self.global_trajs = which_trajs
+        self.local_trajs = local_which_trajs
+
+        if len(local_which_trajs) > 0:
+            self.X = pool.X[local_which_trajs,:,:]
+            self.X = self.X[:,:,which_times]
+            self.F = pool.F[:,local_which_trajs]
+            self.weights = pool.weights[local_which_trajs]
+        else:
+            self.X = torch.zeros((0,pool.N,len(which_times)), device=pool.device)
+            self.F = torch.zeros((pool.N,0), device=pool.device)
+            self.weights = torch.zeros((0,), device=pool.device)
+        
+        self.time = pool.time[which_times]
+        self.my_n_traj, _, self.n_snapshots = self.X.shape
         self.leggauss_deg = leggauss_deg
         self.nsave_rom = nsave_rom
         self.poly_comp = poly_comp
         self.generate_einsum_subscripts()
-        
-        
+
+        if pool.world_size > 1:
+            local_n_traj = torch.tensor([self.my_n_traj], device=pool.device)
+            all_local_counts = [torch.zeros_like(local_n_traj) for _ in range(pool.world_size)]
+            dist.all_gather(all_local_counts, local_n_traj)
+            self.total_n_traj = sum([count.item() for count in all_local_counts])
+        else:
+            self.total_n_traj = self.my_n_traj
+
         # Count the total number of trajectories in this batch and
         # scale the weight accordingly so that the cost function measures
         # the average error over snapshots and trajectories.
-        self.weights *= len(which_trajs)*self.n_snapshots
+        self.weights *= self.total_n_traj*self.n_snapshots
         
         # Parse the keyword arguments
         self.which_fix = kwargs.get('which_fix','fix_none')
@@ -161,7 +178,28 @@ class optimization_objects:
             self.randic /= torch.linalg.vector_norm(self.randic)
             self.randic = self.randic.reshape(-1)
             
+
+    def _global_to_local_indices(self,global_indices,pool):
+        if len(global_indices) == 0:
+            return torch.tensor([], device=pool.device, dtype=torch.long)
         
+        if not isinstance(global_indices, torch.Tensor):
+            global_indices = torch.tensor(global_indices, device=pool.device, dtype=torch.long)
+
+        gpu_indices = torch.tensor(pool.traj_indices, device=pool.device)
+        mask = torch.isin(global_indices, gpu_indices)
+        requested_and_owned = global_indices[mask]
+
+        if len(requested_and_owned) == 0:
+            return torch.tensor([], device=pool.device, dtype=torch.long)
+        
+        local_indices = []
+        for global_idx in requested_and_owned:
+            local_idx = (gpu_indices == global_idx).nonzero(as_tuple=True)[0][0]
+            local_indices.append(local_idx)
+        
+        return torch.tensor(local_indices, device=pool.device, dtype=torch.long)
+    
     
     def generate_einsum_subscripts(self):
         """

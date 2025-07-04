@@ -53,8 +53,8 @@ poly_comp = [1,2]   # Model with a linear part and a quadratic part
 
 #%% Compute NiTROM model 
 
-which_trajs = torch.arange(0,pool.n_traj,1)
-which_times = torch.arange(0,pool.n_snapshots,1)
+which_trajs = torch.arange(0,pool.n_traj,1,device=device)
+which_times = torch.arange(0,pool.n_snapshots,1,device=device)
 leggauss_deg = 5
 nsave_rom = 2
 
