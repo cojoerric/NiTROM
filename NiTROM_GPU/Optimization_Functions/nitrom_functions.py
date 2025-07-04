@@ -1,13 +1,13 @@
 import numpy as np
 import scipy as sp
 import torch
+import torch.distributed as dist
 from string import ascii_lowercase as ascii
 import pymanopt
 
 import time as tlib
 from ..PyTorch_Functions.integrators import my_etdrk4, etdrk4_setup
 from ..PyTorch_Functions.linear_interpolation import Interp1D
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def create_objective_and_gradient(manifold,opt_obj,pool,fom):
     
@@ -31,8 +31,8 @@ def create_objective_and_gradient(manifold,opt_obj,pool,fom):
         Phi, Psi = params[0], params[1]
         tensors = params[2:]
 
-        Phi = Phi.to(device); Psi = Psi.to(device)
-        tensors = tuple(tensor.to(device) for tensor in tensors)
+        Phi = Phi.to(pool.device); Psi = Psi.to(pool.device)
+        tensors = tuple(tensor.to(pool.device) for tensor in tensors)
         PhiF = Phi@torch.linalg.inv(Psi.T@Phi)
 
         D, V = torch.linalg.eig(tensors[0])
@@ -42,7 +42,7 @@ def create_objective_and_gradient(manifold,opt_obj,pool,fom):
         etdrk4_coefs = etdrk4_setup(linop, dt)
 
         J = 0.0
-        for k in range (pool.n_traj):
+        for k in range (pool.my_n_traj):
             
             # Integrate the reduced-order model from time t = 0 to the final time 
             # specified by the last snapshot in the training trajectory
@@ -51,9 +51,12 @@ def create_objective_and_gradient(manifold,opt_obj,pool,fom):
             sol = my_etdrk4(etdrk4_coefs,opt_obj.evaluate_rom_rhs_nonlinear,opt_obj.time,z0,args=(u,)+tensors)
             e = fom.compute_output(opt_obj.X[k,:,:]) - fom.compute_output(PhiF@sol)
             J += (1./opt_obj.weights[k])*torch.trace(e.T@e)
+        
+        if pool.world_size > 1:
+            dist.all_reduce(J, op=dist.ReduceOp.SUM)
 
-        if opt_obj.l2_pen != None:
-            time_pen = torch.linspace(0,opt_obj.pen_tf,opt_obj.n_snapshots*opt_obj.nsave_rom,device=device)
+        if opt_obj.l2_pen is not None and pool.rank == 0:
+            time_pen = torch.linspace(0,opt_obj.pen_tf,opt_obj.n_snapshots*opt_obj.nsave_rom,device=pool.device)
             Z = my_etdrk4(etdrk4_coefs,lambda t,z: 0*z,time_pen,opt_obj.randic)
 
             J += opt_obj.l2_pen*torch.dot(Z[:,-1],Z[:,-1])
@@ -61,7 +64,7 @@ def create_objective_and_gradient(manifold,opt_obj,pool,fom):
         return J.cpu()
     
     @pymanopt.function.numpy(manifold)
-    def euclidean_gradient(*params): 
+    def euclidean_gradient(*params):
 
         """ 
             Evaluate the euclidean gradient of the cost function with respect to the parameters
@@ -72,8 +75,8 @@ def create_objective_and_gradient(manifold,opt_obj,pool,fom):
         Phi, Psi = params[0], params[1]
         tensors = params[2:]
 
-        Phi = torch.from_numpy(Phi).to(device); Psi = torch.from_numpy(Psi).to(device)
-        tensors = tuple(torch.from_numpy(tensor).to(device) for tensor in tensors)
+        Phi = torch.from_numpy(Phi).to(pool.device); Psi = torch.from_numpy(Psi).to(pool.device)
+        tensors = tuple(torch.from_numpy(tensor).to(pool.device) for tensor in tensors)
 
         D, V = torch.linalg.eig(tensors[0])
         V_inv = torch.linalg.inv(V)
@@ -84,18 +87,18 @@ def create_objective_and_gradient(manifold,opt_obj,pool,fom):
         etdrk4_coefs = etdrk4_setup(linop, dt)
         etdrk4_coefs_2 = etdrk4_setup(linop_T, dt2)
         etdrk4_coefs_T2 = etdrk4_setup(linop_T,dt2)
-        t_lin0 = torch.linspace(0.0, 1.0, steps=opt_obj.nsave_rom, device=device)
+        t_lin0 = torch.linspace(0.0, 1.0, steps=opt_obj.nsave_rom, device=pool.device)
         
         # Initialize arrays to store the gradients
         n, r = Phi.shape
-        grad_Phi = torch.zeros((n,r), device=device)
-        grad_Psi = torch.zeros((n,r), device=device)
-        grad_tensors = [0]*len(tensors)
+        grad_Phi = torch.zeros((n,r), device=pool.device)
+        grad_Psi = torch.zeros((n,r), device=pool.device)
+        grad_tensors = [torch.zeros_like(tensor) for tensor in tensors]
         
 
         # Initialize arrays needed for future computations
-        lam_j_0 = torch.zeros(r, device=device, dtype=Phi.dtype)
-        Int_lambda = torch.zeros(r, device=device)
+        lam_j_0 = torch.zeros(r, device=pool.device, dtype=Phi.dtype)
+        Int_lambda = torch.zeros(r, device=pool.device)
         
         # Biorthogonalize Phi and Psi
         F = torch.linalg.inv(Psi.T@Phi)
@@ -104,11 +107,10 @@ def create_objective_and_gradient(manifold,opt_obj,pool,fom):
         # Gauss-Legendre quadrature points and weights
         # Cubic spline interpolation to compute integral
         tlg, wlg = np.polynomial.legendre.leggauss(opt_obj.leggauss_deg)
-        tlg = torch.from_numpy(tlg).to(device); wlg = torch.from_numpy(wlg).to(device)
+        tlg = torch.from_numpy(tlg).to(pool.device); wlg = torch.from_numpy(wlg).to(pool.device)
 
-        for k in range (pool.n_traj):
-            
-            
+        for k in range (pool.my_n_traj):
+
             z0 = Psi.T@opt_obj.X[k,:,0]
             u = Psi.T@opt_obj.F[:,k]
             sol = my_etdrk4(etdrk4_coefs,opt_obj.evaluate_rom_rhs_nonlinear,opt_obj.time,z0,args=(u,)+tensors)
@@ -188,14 +190,17 @@ def create_objective_and_gradient(manifold,opt_obj,pool,fom):
                         - torch.einsum('i,j',opt_obj.F[:,k],Int_lambda)
             grad_Phi += -(2/alpha)*torch.einsum('i,j',Ctej - Psi@(PhiF.T@Ctej),F@zj)
 
-        
+        if pool.world_size > 1:
+            dist.all_reduce(grad_Phi, op=dist.ReduceOp.SUM)
+            dist.all_reduce(grad_Psi, op=dist.ReduceOp.SUM)
+            for k in range (len(grad_tensors)):
+                dist.all_reduce(grad_tensors[k], op=dist.ReduceOp.SUM)
+
         # Compute the gradient of the stability-promoting term
-        if opt_obj.l2_pen != None and pool.rank == 0:
-            
+        if opt_obj.l2_pen is not None and pool.rank == 0:
             idx = opt_obj.poly_comp.index(1)    # index of the linear tensor
-        
-            
-            time_pen = torch.linspace(0,opt_obj.pen_tf,opt_obj.n_snapshots*opt_obj.nsave_rom,device=device)
+
+            time_pen = torch.linspace(0,opt_obj.pen_tf,opt_obj.n_snapshots*opt_obj.nsave_rom,device=pool.device)
             Z = my_etdrk4(etdrk4_coefs,lambda t,z: 0*z,time_pen,opt_obj.randic)
             Mu = my_etdrk4(etdrk4_coefs,lambda t,z: 0*z,time_pen,-2*opt_obj.l2_pen*Z[:,-1])
             Mu = torch.fliplr(Mu)

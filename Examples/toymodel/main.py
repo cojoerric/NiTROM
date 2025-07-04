@@ -1,24 +1,28 @@
 import numpy as np 
 import scipy
 import torch
+import torch.distributed as dist
 import matplotlib.pyplot as plt
 
 import pymanopt
 import pymanopt.manifolds as manifolds
 import pymanopt.optimizers as optimizers
 
-plt.rcParams.update({"font.family":"serif","font.sans-serif":["Computer Modern"],'font.size':18,'text.usetex':True})
-plt.rc('text.latex',preamble=r'\usepackage{amsmath}')
-
 from NiTROM_GPU.Optimization_Functions import classes, nitrom_functions
 from NiTROM_GPU.PyManopt_Functions.my_pymanopt_classes import myAdaptiveLineSearcher
+from NiTROM_GPU.PyTorch_Functions import gpu_utils
 import fom_class_pytorch
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-torch.set_printoptions(precision=8)
 
+plt.rcParams.update({"font.family":"serif","font.sans-serif":["Computer Modern"],'font.size':18,'text.usetex':True})
+plt.rc('text.latex',preamble=r'\usepackage{amsmath}')
+torch.set_printoptions(precision=8)
 
 cPOD, cOI, cTR, cOPT = '#66c2a5', '#fc8d62', '#8da0cb', '#e78ac3'
 lPOD, lOI, lTR, lOPT = 'solid', 'dotted', 'dashed', 'dashdot'
+
+device, rank, world_size = gpu_utils.setup_distributed_gpus()
+if rank == 0:
+    print(f"Using {world_size} GPUs for distributed training.")
 
 n = 3
 n_traj = 4
@@ -41,12 +45,17 @@ fname_deriv = traj_path + "deriv_%03d.npy"
 fname_time = traj_path + "time.npy"
 
 pool_inputs = (n_traj, fname_traj, fname_time)
-pool_kwargs = {'fname_steady_forcing':fname_forcing,'fname_weights':fname_weight,'fname_derivs':fname_deriv}
+pool_kwargs = {'fname_steady_forcing':fname_forcing,
+               'fname_weights':fname_weight,
+               'fname_derivs':fname_deriv,
+               'device':device,
+               'rank':rank,
+               'world_size':world_size
+}
 pool = classes.pool(*pool_inputs,**pool_kwargs)
 
 r = 2               # ROM dimension
 poly_comp = [1,2]   # Model with a linear part and a quadratic part
-
 
 #%% Compute NiTROM model 
 
@@ -55,8 +64,7 @@ which_times = torch.arange(0,pool.n_snapshots,1)
 leggauss_deg = 5
 nsave_rom = 10
 
-opt_obj_inputs = (pool,which_trajs,which_times,leggauss_deg,nsave_rom,[1,2])
-
+opt_obj_inputs = (pool,which_trajs,which_times,leggauss_deg,nsave_rom,poly_comp)
 opt_obj = classes.optimization_objects(*opt_obj_inputs)
 
 St = manifolds.Stiefel(n,r)
@@ -71,33 +79,45 @@ problem = pymanopt.Problem(M,cost,euclidean_gradient=grad)
 line_searcher = myAdaptiveLineSearcher(contraction_factor=0.5,sufficient_decrease=0.85,max_iterations=25,initial_step_size=1)
 optimizer = optimizers.ConjugateGradient(max_iterations=50,min_step_size=1e-20,max_time=3600,line_searcher=line_searcher,log_verbosity=1)
 
-Phi_pod = np.load(traj_path + "Phi_pod.npy")
-Psi_pod = np.load(traj_path + "Psi_pod.npy")
-A2 = np.load(traj_path + "A2.npy")
-A3 = np.load(traj_path + "A3.npy")
-# print(A3)
-tensors_pod = (A2,A3)
+if rank == 0:
+    Phi_pod = np.load(traj_path + "Phi_pod.npy")
+    Psi_pod = np.load(traj_path + "Psi_pod.npy")
+    A2 = np.load(traj_path + "A2.npy")
+    A3 = np.load(traj_path + "A3.npy")
+    tensors_pod = (A2,A3)
+    point = (Phi_pod,Psi_pod) + tensors_pod
+else:
+    point = None
 
-point = (Phi_pod,Psi_pod) + tensors_pod
+if world_size > 1:
+    point = [torch.tensor(p, device=device) if isinstance(p, np.ndarray) else p for p in point]
+    for p in point:
+        if p is not None:
+            dist.broadcast(p, src=0)
+    point = tuple(p.cpu().numpy() if isinstance(p, torch.Tensor) else p for p in point)
+
 result = optimizer.run(problem,initial_point=point)
 
-Phi_nit = result.point[0]
-Psi_nit = result.point[1]
-Phi_nit = Phi_nit@scipy.linalg.inv(Psi_nit.T@Phi_nit)
-tensors_nit = tuple(result.point[2:])
+if rank == 0:
+    Phi_nit = result.point[0]
+    Psi_nit = result.point[1]
+    Phi_nit = Phi_nit@scipy.linalg.inv(Psi_nit.T@Phi_nit)
+    tensors_nit = tuple(result.point[2:])
 
-itervec_nit = result.log["iterations"]["iteration"]
-costvec_nit = result.log["iterations"]["cost"]
-gradvec_nit = result.log["iterations"]["gradient_norm"]
+    itervec_nit = result.log["iterations"]["iteration"]
+    costvec_nit = result.log["iterations"]["cost"]
+    gradvec_nit = result.log["iterations"]["gradient_norm"]
 
-plt.figure()
-plt.plot(itervec_nit,costvec_nit,color=cOPT,linestyle=lOPT,label='NiTROM')
+    plt.figure()
+    plt.plot(itervec_nit,costvec_nit,color=cOPT,linestyle=lOPT,label='NiTROM')
 
-ax = plt.gca()
-ax.set_yscale('log')
-ax.set_xlabel('Conj. gradient iteration')
-ax.set_ylabel('Cost')
+    ax = plt.gca()
+    ax.set_yscale('log')
+    ax.set_xlabel('Conj. gradient iteration')
+    ax.set_ylabel('Cost')
 
-plt.legend()
-plt.tight_layout()
-plt.show()
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+gpu_utils.cleanup_distributed()
