@@ -1,24 +1,21 @@
 import numpy as np 
-import scipy
 import torch
 import matplotlib.pyplot as plt
+import time
 
-import pymanopt
 import pymanopt.manifolds as manifolds
-import pymanopt.optimizers as optimizers
+
+import cProfile, pstats
+pr = cProfile.Profile()
 
 plt.rcParams.update({"font.family":"serif","font.sans-serif":["Computer Modern"],'font.size':18,'text.usetex':True})
 plt.rc('text.latex',preamble=r'\usepackage{amsmath}')
 
 from NiTROM_GPU.Optimization_Functions import classes, nitrom_functions
-from NiTROM_GPU.PyManopt_Functions.my_pymanopt_classes import myAdaptiveLineSearcher
 import fom_class_pytorch
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.set_printoptions(precision=8)
 
-
-cPOD, cOI, cTR, cOPT = '#66c2a5', '#fc8d62', '#8da0cb', '#e78ac3'
-lPOD, lOI, lTR, lOPT = 'solid', 'dotted', 'dashed', 'dashdot'
 
 n = 3
 n_traj = 4
@@ -53,7 +50,7 @@ poly_comp = [1,2]   # Model with a linear part and a quadratic part
 which_trajs = torch.arange(0,pool.n_traj,1)
 which_times = torch.arange(0,pool.n_snapshots,1)
 leggauss_deg = 5
-nsave_rom = 10
+nsave_rom = 3
 
 opt_obj_inputs = (pool,which_trajs,which_times,leggauss_deg,nsave_rom,[1,2])
 
@@ -66,38 +63,31 @@ Euc_rrr = manifolds.Euclidean(r,r,r)
 
 M = manifolds.Product([Gr,St,Euc_rr,Euc_rrr])
 cost, grad, hess = nitrom_functions.create_objective_and_gradient(M,opt_obj,pool,fom)
-problem = pymanopt.Problem(M,cost,euclidean_gradient=grad)
 
-line_searcher = myAdaptiveLineSearcher(contraction_factor=0.5,sufficient_decrease=0.85,max_iterations=25,initial_step_size=1)
-optimizer = optimizers.ConjugateGradient(max_iterations=50,min_step_size=1e-20,max_time=3600,line_searcher=line_searcher,log_verbosity=1)
+weights = pool.weights.detach().clone()
+pool.weights *= pool.n_traj*pool.n_snapshots
 
 Phi_pod = np.load(traj_path + "Phi_pod.npy")
 Psi_pod = np.load(traj_path + "Psi_pod.npy")
 A2 = np.load(traj_path + "A2.npy")
 A3 = np.load(traj_path + "A3.npy")
-# print(A3)
 tensors_pod = (A2,A3)
-
 point = (Phi_pod,Psi_pod) + tensors_pod
-result = optimizer.run(problem,initial_point=point)
 
-Phi_nit = result.point[0]
-Psi_nit = result.point[1]
-Phi_nit = Phi_nit@scipy.linalg.inv(Psi_nit.T@Phi_nit)
-tensors_nit = tuple(result.point[2:])
+t1 = time.time()
+pr.enable()
+grad_val = grad(*point)
+pr.disable()
+t2 = time.time()
 
-itervec_nit = result.log["iterations"]["iteration"]
-costvec_nit = result.log["iterations"]["cost"]
-gradvec_nit = result.log["iterations"]["gradient_norm"]
+pool.weights = weights
 
-plt.figure()
-plt.plot(itervec_nit,costvec_nit,color=cOPT,linestyle=lOPT,label='NiTROM')
+print(f"Gradient evaluation time: {t2 - t1:.4f} seconds")
+norm = 0
+for tensor in grad_val:
+    norm += np.linalg.norm(tensor)
+print("Gradient norm:", norm)
 
-ax = plt.gca()
-ax.set_yscale('log')
-ax.set_xlabel('Conj. gradient iteration')
-ax.set_ylabel('Cost')
-
-plt.legend()
-plt.tight_layout()
-plt.show()
+pr.dump_stats("gradient_profiling.prof")
+stats = pstats.Stats(pr).sort_stats('cumtime')
+stats.print_stats(20)   # top 20 slowest functions

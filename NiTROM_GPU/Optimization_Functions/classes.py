@@ -197,11 +197,11 @@ class optimization_objects:
             Optional keyword arguments:
                 'forcing_interp':   a PyTorch interpolator f that gives us a forcing f(t)
         """
-        if torch.linalg.vector_norm(z) >= 1e4:    
+        if torch.linalg.vector_norm(z) >= 1e4:
             dzdt = 0.0*z 
         else:
             f = kwargs.get('forcing_interp',None)
-            f = f(t) if f != None else torch.zeros(len(z), device=device)
+            f = f(t) if f != None else torch.zeros(len(z), device=device, dtype=z.dtype)
             u = u.clone().detach() if isinstance(u,torch.Tensor) else u(t)
             dzdt = u + f
             for (i, k) in enumerate(self.poly_comp[1:], start=1):
@@ -230,6 +230,35 @@ class optimization_objects:
                 
                 combs = list(combinations(self.einsum_ss[i][1:],r=k-1))
                 operands = [operators[i]] + [fq(t) for _ in range(k-1)]
+                for comb in combs:
+                    equation = [self.einsum_ss[i][0]] + list(comb)
+                    equation = ",".join(equation)
+                    
+                    J += torch.einsum(equation,*operands)
+                    
+            dzdt = J.T@z
+            
+        return dzdt
+    
+
+    def evaluate_rom_adjoint_nonlinear(self,t,z,fq,*operators):
+        """
+            Function that can be fed into a PyTorch integrator routine (nonlinear terms only). 
+            t:          time instance
+            z:          state vector
+            fq:         PyTorch interpolator to evaluate the
+                        base flow at time t
+            operators:  (A2,A3,A4,...)
+        """
+
+        if torch.linalg.vector_norm(z) >= 1e4:
+            dzdt = 0.0*z
+        else:
+            J = torch.zeros((len(z),len(z)),device=device,dtype=z.dtype)
+            for (i, k) in enumerate(self.poly_comp[1:], start=1):
+                
+                combs = list(combinations(self.einsum_ss[i][1:],r=k-1))
+                operands = [operators[i]] + [fq(t).to(z.dtype) for _ in range(k-1)]
                 for comb in combs:
                     equation = [self.einsum_ss[i][0]] + list(comb)
                     equation = ",".join(equation)
