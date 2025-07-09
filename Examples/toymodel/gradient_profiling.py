@@ -4,16 +4,15 @@ import matplotlib.pyplot as plt
 import time
 
 import pymanopt.manifolds as manifolds
+from NiTROM_GPU.Optimization_Functions import classes, nitrom_functions
 from NiTROM_GPU.PyTorch_Functions import gpu_utils
+import fom_class_pytorch
 
 import cProfile, pstats
 pr = cProfile.Profile()
 
 plt.rcParams.update({"font.family":"serif","font.sans-serif":["Computer Modern"],'font.size':18,'text.usetex':True})
 plt.rc('text.latex',preamble=r'\usepackage{amsmath}')
-
-from NiTROM_GPU.Optimization_Functions import classes, nitrom_functions
-import fom_class_pytorch
 torch.set_printoptions(precision=8)
 
 device, rank, world_size = gpu_utils.setup_distributed_gpus()
@@ -92,9 +91,9 @@ print(f"Gradient evaluation time: {t2 - t1:.4f} seconds")
 norm = 0
 for tensor in grad_val:
     norm += np.linalg.norm(tensor)
-print("Gradient norm:", norm)
-
-pr.dump_stats("gradient_profiling.prof")
-stats = pstats.Stats(pr).sort_stats('cumtime')
-stats.print_stats(20)   # top 20 slowest functions
+if rank == 0:
+    print("Gradient norm:", norm)
+    pr.dump_stats("gradient_profiling.prof")
+    stats = pstats.Stats(pr).sort_stats('cumtime')
+    stats.print_stats(20)   # top 20 slowest functions
 gpu_utils.cleanup_distributed()

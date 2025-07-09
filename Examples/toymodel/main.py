@@ -23,6 +23,9 @@ lPOD, lOI, lTR, lOPT = 'solid', 'dotted', 'dashed', 'dashdot'
 device, rank, world_size = gpu_utils.setup_distributed_gpus()
 if rank == 0:
     print(f"Using {world_size} GPU(s) for distributed training.")
+    verb = 2
+else:
+    verb = 0
 
 n = 3
 n_traj = 4
@@ -77,24 +80,16 @@ cost, grad, hess = nitrom_functions.create_objective_and_gradient(M,opt_obj,pool
 problem = pymanopt.Problem(M,cost,euclidean_gradient=grad)
 
 line_searcher = myAdaptiveLineSearcher(contraction_factor=0.5,sufficient_decrease=0.85,max_iterations=25,initial_step_size=1)
-optimizer = optimizers.ConjugateGradient(max_iterations=40,min_step_size=1e-20,max_time=3600,line_searcher=line_searcher,log_verbosity=1)
+optimizer = optimizers.ConjugateGradient(max_iterations=40,min_step_size=1e-20,max_time=3600,line_searcher=line_searcher,log_verbosity=1,verbosity=verb)
 
+point = [None]*4
 if rank == 0:
-    Phi_pod = np.load(traj_path + "Phi_pod.npy")
-    Psi_pod = np.load(traj_path + "Psi_pod.npy")
-    A2 = np.load(traj_path + "A2.npy")
-    A3 = np.load(traj_path + "A3.npy")
-    tensors_pod = (A2,A3)
-    point = (Phi_pod,Psi_pod) + tensors_pod
-else:
-    point = None
-
-if world_size > 1:
-    point = [torch.tensor(p, device=device) if isinstance(p, np.ndarray) else p for p in point]
-    for p in point:
-        if p is not None:
-            dist.broadcast(p, src=0)
-    point = tuple(p.cpu().numpy() if isinstance(p, torch.Tensor) else p for p in point)
+    point[0] = np.load(traj_path + "Phi_pod.npy")
+    point[1] = np.load(traj_path + "Psi_pod.npy")
+    point[2] = np.load(traj_path + "A2.npy")
+    point[3] = np.load(traj_path + "A3.npy")
+dist.broadcast_object_list(point,src=0)
+point = tuple(point)
 
 result = optimizer.run(problem,initial_point=point)
 
