@@ -85,9 +85,9 @@ def create_objective_and_gradient(manifold,opt_obj,pool,fom):
         dt = opt_obj.time[1] - opt_obj.time[0]
         dt2 = dt / (opt_obj.nsave_rom-1)
         etdrk4_coefs = etdrk4_setup(linop, dt)
-        etdrk4_coefs_2 = etdrk4_setup(linop_T, dt2)
-        etdrk4_coefs_T2 = etdrk4_setup(linop_T,dt2)
-        t_lin0 = torch.linspace(0.0, 1.0, steps=opt_obj.nsave_rom, device=pool.device)
+        etdrk4_coefs_2 = etdrk4_setup(linop, dt2)
+        etdrk4_coefs_T2 = etdrk4_setup(linop_T, dt2)
+        t_unit = torch.linspace(0.0, 1.0, steps=opt_obj.nsave_rom, device=pool.device, dtype=torch.float64)
         
         # Initialize arrays to store the gradients
         n, r = Phi.shape
@@ -139,9 +139,9 @@ def create_objective_and_gradient(manifold,opt_obj,pool,fom):
                 tf_j = opt_obj.time[id1]
                 t0_j = opt_obj.time[id0]
                 z0_j = Z[:,id0]
+
                 delta = tf_j - t0_j
-                
-                time_rom_j = t_lin0 * delta + t0_j
+                time_rom_j = t0_j + t_unit * delta
                 if torch.abs(time_rom_j[-1] - tf_j) >= 1e-6:
                     print(time_rom_j[-1],tf_j)
                     raise ValueError("Error in euclidean_gradient() - final time is not correct!")

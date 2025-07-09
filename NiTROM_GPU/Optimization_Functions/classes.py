@@ -232,7 +232,7 @@ class optimization_objects:
         else:
             f = kwargs.get('forcing_interp',None)
             f = f(t) if f != None else torch.zeros(len(z), device=z.device)
-            u = u.clone().detach() if isinstance(u,torch.Tensor) else u(t)
+            u = u.clone() if isinstance(u,torch.Tensor) else u(t)
             dzdt = u + f
             for (i, k) in enumerate(self.poly_comp):
                 equation = ",".join(self.einsum_ss[i])
@@ -258,7 +258,7 @@ class optimization_objects:
         else:
             f = kwargs.get('forcing_interp',None)
             f = f(t) if f != None else torch.zeros(len(z), device=z.device, dtype=z.dtype)
-            u = u.clone().detach() if isinstance(u,torch.Tensor) else u(t)
+            u = u.clone() if isinstance(u,torch.Tensor) else u(t)
             dzdt = u + f
             for (i, k) in enumerate(self.poly_comp[1:], start=1):
                 equation = ",".join(self.einsum_ss[i])

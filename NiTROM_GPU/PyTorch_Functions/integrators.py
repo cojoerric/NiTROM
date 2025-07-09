@@ -74,11 +74,11 @@ def my_rk4(fun, t_vec, x0, args=()):
         xs: A tensor containing the state at each time point in `t_vec`. Each column corresponds to the state at a time step.
     """
 
-    x = x0.clone().detach()
+    x = x0.clone()
     dt = (t_vec[1] - t_vec[0])/100
     xs = torch.zeros((len(x0), len(t_vec)), dtype=x0.dtype, device=x0.device)
     xs[:, 0] = x0
-    t = t_vec[0].clone().detach()
+    t = t_vec[0].clone()
     for i, T in enumerate(t_vec[1:], start=1):
         while t < T:
             dt_trial = min(dt, T - t)
