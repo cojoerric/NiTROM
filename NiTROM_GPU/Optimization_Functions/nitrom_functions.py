@@ -51,15 +51,15 @@ def create_objective_and_gradient(manifold,opt_obj,pool,fom):
             sol = my_etdrk4(etdrk4_coefs,opt_obj.evaluate_rom_rhs_nonlinear,opt_obj.time,z0,args=(u,)+tensors)
             e = fom.compute_output(opt_obj.X[k,:,:]) - fom.compute_output(PhiF@sol)
             J += (1./opt_obj.weights[k])*torch.trace(e.T@e)
-        
-        if pool.world_size > 1:
-            dist.all_reduce(J, op=dist.ReduceOp.SUM)
 
         if opt_obj.l2_pen is not None and pool.rank == 0:
             time_pen = torch.linspace(0,opt_obj.pen_tf,opt_obj.n_snapshots*opt_obj.nsave_rom,device=pool.device)
             Z = my_etdrk4(etdrk4_coefs,lambda t,z: 0*z,time_pen,opt_obj.randic)
 
             J += opt_obj.l2_pen*torch.dot(Z[:,-1],Z[:,-1])
+        
+        if pool.world_size > 1:
+            dist.all_reduce(J, op=dist.ReduceOp.SUM)
         
         return J.cpu()
     
@@ -190,12 +190,6 @@ def create_objective_and_gradient(manifold,opt_obj,pool,fom):
                         - torch.einsum('i,j',opt_obj.F[:,k],Int_lambda)
             grad_Phi += -(2/alpha)*torch.einsum('i,j',Ctej - Psi@(PhiF.T@Ctej),F@zj)
 
-        if pool.world_size > 1:
-            dist.all_reduce(grad_Phi, op=dist.ReduceOp.SUM)
-            dist.all_reduce(grad_Psi, op=dist.ReduceOp.SUM)
-            for k in range (len(grad_tensors)):
-                dist.all_reduce(grad_tensors[k], op=dist.ReduceOp.SUM)
-
         # Compute the gradient of the stability-promoting term
         if opt_obj.l2_pen is not None and pool.rank == 0:
             idx = opt_obj.poly_comp.index(1)    # index of the linear tensor
@@ -204,7 +198,6 @@ def create_objective_and_gradient(manifold,opt_obj,pool,fom):
             Z = my_etdrk4(etdrk4_coefs,lambda t,z: 0*z,time_pen,opt_obj.randic)
             Mu = my_etdrk4(etdrk4_coefs,lambda t,z: 0*z,time_pen,-2*opt_obj.l2_pen*Z[:,-1])
             Mu = torch.fliplr(Mu)
-            
             
             for k in range (opt_obj.n_snapshots - 1):
                 
@@ -221,7 +214,12 @@ def create_objective_and_gradient(manifold,opt_obj,pool,fom):
                 
                 for i in range (opt_obj.leggauss_deg):
                     grad_tensors[idx] += -a*wlg[i]*torch.einsum('i,j',Muk[:,i],Zk[:,i])
-                
+
+        if pool.world_size > 1:
+            dist.all_reduce(grad_Phi, op=dist.ReduceOp.SUM)
+            dist.all_reduce(grad_Psi, op=dist.ReduceOp.SUM)
+            for k in range (len(grad_tensors)):
+                dist.all_reduce(grad_tensors[k], op=dist.ReduceOp.SUM)
 
         if opt_obj.which_fix == 'fix_bases':
 

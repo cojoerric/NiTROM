@@ -1,7 +1,7 @@
 import numpy as np 
 import torch
 import matplotlib.pyplot as plt
-import time
+import time, os
 
 import pymanopt.manifolds as manifolds
 from NiTROM_GPU.Optimization_Functions import classes, nitrom_functions
@@ -16,8 +16,10 @@ plt.rc('text.latex',preamble=r'\usepackage{amsmath}')
 torch.set_printoptions(precision=8)
 
 device, rank, world_size = gpu_utils.setup_distributed_gpus()
+if rank == 0:
+    print(f"Using {world_size} GPU(s) for distributed training.")
 n = 3
-n_traj = 4
+n_traj = 8
 beta = 20.0
 diag_vec = torch.tensor([-1.0,-2.0,-5.0],device=device)
 A2 = torch.diag(diag_vec)
@@ -58,7 +60,6 @@ leggauss_deg = 5
 nsave_rom = 2
 
 opt_obj_inputs = (pool,which_trajs,which_times,leggauss_deg,nsave_rom,poly_comp)
-
 opt_obj = classes.optimization_objects(*opt_obj_inputs)
 
 St = manifolds.Stiefel(n,r)
@@ -70,7 +71,6 @@ M = manifolds.Product([Gr,St,Euc_rr,Euc_rrr])
 cost, grad, hess = nitrom_functions.create_objective_and_gradient(M,opt_obj,pool,fom)
 
 weights = pool.weights.detach().clone()
-pool.weights *= pool.n_traj*pool.n_snapshots
 
 Phi_pod = np.load(traj_path + "Phi_pod.npy")
 Psi_pod = np.load(traj_path + "Psi_pod.npy")
@@ -87,11 +87,11 @@ t2 = time.time()
 
 pool.weights = weights
 
-print(f"Gradient evaluation time: {t2 - t1:.4f} seconds")
 norm = 0
 for tensor in grad_val:
     norm += np.linalg.norm(tensor)
 if rank == 0:
+    print(f"Gradient evaluation time: {t2 - t1:.4f} seconds")
     print("Gradient norm:", norm)
     pr.dump_stats("gradient_profiling.prof")
     stats = pstats.Stats(pr).sort_stats('cumtime')

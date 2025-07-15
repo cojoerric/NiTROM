@@ -231,7 +231,7 @@ class optimization_objects:
             dzdt = 0.0*z 
         else:
             f = kwargs.get('forcing_interp',None)
-            f = f(t) if f != None else torch.zeros(len(z), device=z.device)
+            f = f(t) if f != None else torch.zeros(len(z), device=z.device, dtype=z.dtype)
             u = u.clone() if isinstance(u,torch.Tensor) else u(t)
             dzdt = u + f
             for (i, k) in enumerate(self.poly_comp):
@@ -281,7 +281,7 @@ class optimization_objects:
         if torch.linalg.vector_norm(z) >= 1e4:
             dzdt = 0.0*z
         else:
-            J = torch.zeros((len(z),len(z)),device=z.device)
+            J = torch.zeros((len(z),len(z)),device=z.device,dtype=z.dtype)
             for (i, k) in enumerate(self.poly_comp):
                 
                 combs = list(combinations(self.einsum_ss[i][1:],r=k-1))

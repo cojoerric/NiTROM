@@ -7,11 +7,13 @@ class myAdaptiveLineSearcher:
         sufficient_decrease=0.5,
         max_iterations=10,
         initial_step_size=1,
+        rank=0,
     ):
         self._contraction_factor = contraction_factor
         self._sufficient_decrease = sufficient_decrease
         self._max_iterations = max_iterations
         self._initial_step_size = initial_step_size
+        self._rank = rank
         self._oldalpha = None
 
     def search(self, objective, manifold, x, d, f0, df0):
@@ -42,7 +44,7 @@ class myAdaptiveLineSearcher:
 
         # ----- Added by Alby --------
         if alpha <= 1e-12: 
-            print("Attention: allowing for cost function to increase by 1 percent")
+            if self._rank == 0: print("Attention: allowing for cost function to increase by 1 percent")
             alpha = float(self._initial_step_size / norm_d)
             self._oldalpha = alpha
 

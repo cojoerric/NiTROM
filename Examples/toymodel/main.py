@@ -90,6 +90,16 @@ if rank == 0:
     point[3] = np.load(traj_path + "A3.npy")
 dist.broadcast_object_list(point,src=0)
 point = tuple(point)
+cost_val = cost(*point)
+grad_val = grad(*point)
+norm = 0
+for tensor in grad_val:
+    norm += np.linalg.norm(tensor)
+if rank == 0:
+    print(cost_val)
+    print(norm)
+torch.distributed.barrier()
+raise Exception("Stopping here to check initial cost.")
 
 result = optimizer.run(problem,initial_point=point)
 
