@@ -117,7 +117,6 @@ def operator_inference(mpi_pool,Phi,poly_comp,lambdas):
     W = assemble_W(mpi_pool)
     Y = assemble_Y(mpi_pool,Phi)
     Z = assemble_Z(mpi_pool,Phi,poly_comp)
-    print(Y.shape)
     P = assemble_P(r,poly_comp,lambdas)
     
     S = solve_least_squares_problem(mpi_pool,Z,Y,W,P)
