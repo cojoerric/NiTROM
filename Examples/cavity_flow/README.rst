@@ -8,11 +8,9 @@ Navier-Stokes equations and the continuity equation:
 
     .. math::
 
-        \begin{align}
             \frac{\partial \mathbf{v}}{\partial t} + \mathbf{v} \cdot \nabla 
             \mathbf{v} &= -\nabla p + \frac{1}{Re} \nabla^2 \mathbf{v},\\
             \nabla \cdot \mathbf{v} &= 0,
-        \end{align}
 
 where :math:`\mathbf{v}(\mathbf{x},t)=(u(\mathbf{x},t), v(\mathbf{x},t))` is the 
 2D velocity field, :math:`p(\mathbf{x},t)` is the pressure field, and :math:`Re` 
