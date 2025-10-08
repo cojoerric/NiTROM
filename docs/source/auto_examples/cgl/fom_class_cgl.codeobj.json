@@ -1,0 +1,182 @@
+{
+ "np.concatenate": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "concatenate"
+  }
+ ],
+ "np.diag": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "diag"
+  }
+ ],
+ "np.dot": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "dot"
+  }
+ ],
+ "np.exp": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "exp"
+  }
+ ],
+ "np.fliplr": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "fliplr"
+  }
+ ],
+ "np.linalg.norm": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy.linalg",
+   "module_short": "numpy.linalg",
+   "name": "norm"
+  }
+ ],
+ "np.mod": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "mod"
+  }
+ ],
+ "np.ones": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "ones"
+  }
+ ],
+ "np.outer": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "outer"
+  }
+ ],
+ "np.random.randn": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy.random",
+   "module_short": "numpy.random",
+   "name": "randn"
+  }
+ ],
+ "np.sqrt": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "sqrt"
+  }
+ ],
+ "np.zeros": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "zeros"
+  }
+ ],
+ "sciplin.inv": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "scipy.linalg",
+   "module_short": "scipy.linalg",
+   "name": "inv"
+  }
+ ],
+ "sciplin.svd": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "scipy.linalg",
+   "module_short": "scipy.linalg",
+   "name": "svd"
+  }
+ ],
+ "scipy.interpolate.interp1d": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "scipy.interpolate",
+   "module_short": "scipy.interpolate",
+   "name": "interp1d"
+  }
+ ],
+ "scipy.sparse.bmat": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "scipy.sparse",
+   "module_short": "scipy.sparse",
+   "name": "bmat"
+  }
+ ],
+ "scipy.sparse.csc_array": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "scipy.sparse",
+   "module_short": "scipy.sparse",
+   "name": "csc_array"
+  }
+ ],
+ "scipy.sparse.diags": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "scipy.sparse",
+   "module_short": "scipy.sparse",
+   "name": "diags"
+  }
+ ],
+ "scipy.sparse.identity": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "scipy.sparse",
+   "module_short": "scipy.sparse",
+   "name": "identity"
+  }
+ ],
+ "scipy.sparse.linalg.splu": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "scipy.sparse.linalg",
+   "module_short": "scipy.sparse.linalg",
+   "name": "splu"
+  }
+ ]
+}

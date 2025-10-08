@@ -1,0 +1,416 @@
+{
+ "MPI.COMM_WORLD": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "mpi4py.MPI",
+   "module_short": "mpi4py.MPI",
+   "name": "COMM_WORLD"
+  }
+ ],
+ "check_gradient": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "pymanopt.tools.diagnostics",
+   "module_short": "pymanopt.tools.diagnostics",
+   "name": "check_gradient"
+  }
+ ],
+ "classes.mpi_pool": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "classes",
+   "module_short": "classes",
+   "name": "mpi_pool"
+  }
+ ],
+ "classes.optimization_objects": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "classes",
+   "module_short": "classes",
+   "name": "optimization_objects"
+  }
+ ],
+ "fom_class_cgl.CGL": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "fom_class_cgl",
+   "module_short": "fom_class_cgl",
+   "name": "CGL"
+  }
+ ],
+ "fom_class_cgl.balanced_truncation": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "fom_class_cgl",
+   "module_short": "fom_class_cgl",
+   "name": "balanced_truncation"
+  }
+ ],
+ "fom_class_cgl.time_step_cgl": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "fom_class_cgl",
+   "module_short": "fom_class_cgl",
+   "name": "time_step_cgl"
+  }
+ ],
+ "manifolds.Euclidean": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "pymanopt.manifolds",
+   "module_short": "pymanopt.manifolds",
+   "name": "Euclidean"
+  }
+ ],
+ "manifolds.Grassmann": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "pymanopt.manifolds",
+   "module_short": "pymanopt.manifolds",
+   "name": "Grassmann"
+  }
+ ],
+ "manifolds.Product": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "pymanopt.manifolds",
+   "module_short": "pymanopt.manifolds",
+   "name": "Product"
+  }
+ ],
+ "manifolds.Stiefel": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "pymanopt.manifolds",
+   "module_short": "pymanopt.manifolds",
+   "name": "Stiefel"
+  }
+ ],
+ "myAdaptiveLineSearcher": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "my_pymanopt_classes",
+   "module_short": "my_pymanopt_classes",
+   "name": "myAdaptiveLineSearcher"
+  }
+ ],
+ "nitrom_functions.create_objective_and_gradient": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "nitrom_functions",
+   "module_short": "nitrom_functions",
+   "name": "create_objective_and_gradient"
+  }
+ ],
+ "np.arange": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "arange"
+  }
+ ],
+ "np.argmin": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "argmin"
+  }
+ ],
+ "np.fft.rfft": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy.fft",
+   "module_short": "numpy.fft",
+   "name": "rfft"
+  }
+ ],
+ "np.linalg.norm": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy.linalg",
+   "module_short": "numpy.linalg",
+   "name": "norm"
+  }
+ ],
+ "np.linspace": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "linspace"
+  }
+ ],
+ "np.load": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "load"
+  }
+ ],
+ "np.logspace": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "logspace"
+  }
+ ],
+ "np.mean": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "mean"
+  }
+ ],
+ "np.min": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "min"
+  }
+ ],
+ "np.mod": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "mod"
+  }
+ ],
+ "np.outer": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "outer"
+  }
+ ],
+ "np.pi": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "pi"
+  }
+ ],
+ "np.random.randn": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy.random",
+   "module_short": "numpy.random",
+   "name": "randn"
+  }
+ ],
+ "np.save": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "save"
+  }
+ ],
+ "np.sin": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "sin"
+  }
+ ],
+ "np.zeros": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "zeros"
+  }
+ ],
+ "np.zeros_like": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "zeros_like"
+  }
+ ],
+ "opinf_fun.operator_inference": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "opinf_functions",
+   "module_short": "opinf_functions",
+   "name": "operator_inference"
+  }
+ ],
+ "opinf_fun.perform_POD": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "opinf_functions",
+   "module_short": "opinf_functions",
+   "name": "perform_POD"
+  }
+ ],
+ "optimizers.ConjugateGradient": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "pymanopt.optimizers",
+   "module_short": "pymanopt.optimizers",
+   "name": "ConjugateGradient"
+  }
+ ],
+ "plt.figure": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "matplotlib.pyplot",
+   "module_short": "matplotlib.pyplot",
+   "name": "figure"
+  }
+ ],
+ "plt.gca": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "matplotlib.pyplot",
+   "module_short": "matplotlib.pyplot",
+   "name": "gca"
+  }
+ ],
+ "plt.plot": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "matplotlib.pyplot",
+   "module_short": "matplotlib.pyplot",
+   "name": "plot"
+  }
+ ],
+ "plt.rc": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "matplotlib.pyplot",
+   "module_short": "matplotlib.pyplot",
+   "name": "rc"
+  }
+ ],
+ "plt.rcParams.update": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "matplotlib.pyplot.rcParams",
+   "module_short": "matplotlib.pyplot.rcParams",
+   "name": "update"
+  }
+ ],
+ "plt.show": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "matplotlib.pyplot",
+   "module_short": "matplotlib.pyplot",
+   "name": "show"
+  }
+ ],
+ "plt.stem": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "matplotlib.pyplot",
+   "module_short": "matplotlib.pyplot",
+   "name": "stem"
+  }
+ ],
+ "plt.tight_layout": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "matplotlib.pyplot",
+   "module_short": "matplotlib.pyplot",
+   "name": "tight_layout"
+  }
+ ],
+ "pymanopt.Problem": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "pymanopt",
+   "module_short": "pymanopt",
+   "name": "Problem"
+  }
+ ],
+ "scipy.interpolate.interp1d": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "scipy.interpolate",
+   "module_short": "scipy.interpolate",
+   "name": "interp1d"
+  }
+ ],
+ "scipy.linalg.inv": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "scipy.linalg",
+   "module_short": "scipy.linalg",
+   "name": "inv"
+  }
+ ],
+ "solve_ivp": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "scipy.integrate",
+   "module_short": "scipy.integrate",
+   "name": "solve_ivp"
+  }
+ ],
+ "sys.path.append": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "sys.path",
+   "module_short": "sys.path",
+   "name": "append"
+  }
+ ]
+}

@@ -1,0 +1,191 @@
+{
+ "lops": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "builtins",
+   "module_short": "builtins",
+   "name": "linear_operators"
+  }
+ ],
+ "lops.D.dot": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "linear_operators.D",
+   "module_short": "linear_operators.D",
+   "name": "dot"
+  }
+ ],
+ "lops.G.dot": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "linear_operators.G",
+   "module_short": "linear_operators.G",
+   "name": "dot"
+  }
+ ],
+ "lops.L.dot": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "linear_operators.L",
+   "module_short": "linear_operators.L",
+   "name": "dot"
+  }
+ ],
+ "lops.gradient_2D": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "linear_operators",
+   "module_short": "linear_operators",
+   "name": "gradient_2D"
+  }
+ ],
+ "lops.laplacian_2D": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "linear_operators",
+   "module_short": "linear_operators",
+   "name": "laplacian_2D"
+  }
+ ],
+ "lops.luP.solve": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "linear_operators.luP",
+   "module_short": "linear_operators.luP",
+   "name": "solve"
+  }
+ ],
+ "np.arange": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "arange"
+  }
+ ],
+ "np.concatenate": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "concatenate"
+  }
+ ],
+ "np.exp": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "exp"
+  }
+ ],
+ "np.linalg.norm": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy.linalg",
+   "module_short": "numpy.linalg",
+   "name": "norm"
+  }
+ ],
+ "np.pi": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "pi"
+  }
+ ],
+ "np.sin": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "sin"
+  }
+ ],
+ "np.zeros": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "zeros"
+  }
+ ],
+ "np.zeros_like": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "zeros_like"
+  }
+ ],
+ "numbaops.divergence_boundary_conditions_2D": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numba_operators",
+   "module_short": "numba_operators",
+   "name": "divergence_boundary_conditions_2D"
+  }
+ ],
+ "numbaops.evaluate_bilinearity_2D": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numba_operators",
+   "module_short": "numba_operators",
+   "name": "evaluate_bilinearity_2D"
+  }
+ ],
+ "numbaops.laplacian_boundary_conditions_2D": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numba_operators",
+   "module_short": "numba_operators",
+   "name": "laplacian_boundary_conditions_2D"
+  }
+ ],
+ "sciplin.inv": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "scipy.linalg",
+   "module_short": "scipy.linalg",
+   "name": "inv"
+  }
+ ],
+ "scipy.sparse.identity": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "scipy.sparse",
+   "module_short": "scipy.sparse",
+   "name": "identity"
+  }
+ ],
+ "splu": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "scipy.sparse.linalg",
+   "module_short": "scipy.sparse.linalg",
+   "name": "splu"
+  }
+ ]
+}

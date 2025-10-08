@@ -1,0 +1,164 @@
+{
+ "classes.flow_parameters": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "classes_cavity",
+   "module_short": "classes_cavity",
+   "name": "flow_parameters"
+  }
+ ],
+ "classes.linear_operators_2D": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "classes_cavity",
+   "module_short": "classes_cavity",
+   "name": "linear_operators_2D"
+  }
+ ],
+ "np.arange": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "arange"
+  }
+ ],
+ "np.flipud": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "flipud"
+  }
+ ],
+ "np.max": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "max"
+  }
+ ],
+ "np.min": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "min"
+  }
+ ],
+ "np.save": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "save"
+  }
+ ],
+ "np.zeros": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "zeros"
+  }
+ ],
+ "plt.cm.get_cmap": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "matplotlib.pyplot.cm",
+   "module_short": "matplotlib.pyplot.cm",
+   "name": "get_cmap"
+  }
+ ],
+ "plt.colorbar": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "matplotlib.pyplot",
+   "module_short": "matplotlib.pyplot",
+   "name": "colorbar"
+  }
+ ],
+ "plt.contourf": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "matplotlib.pyplot",
+   "module_short": "matplotlib.pyplot",
+   "name": "contourf"
+  }
+ ],
+ "plt.figure": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "matplotlib.pyplot",
+   "module_short": "matplotlib.pyplot",
+   "name": "figure"
+  }
+ ],
+ "plt.gca": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "matplotlib.pyplot",
+   "module_short": "matplotlib.pyplot",
+   "name": "gca"
+  }
+ ],
+ "plt.plot": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "matplotlib.pyplot",
+   "module_short": "matplotlib.pyplot",
+   "name": "plot"
+  }
+ ],
+ "plt.rcParams.update": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "matplotlib.pyplot.rcParams",
+   "module_short": "matplotlib.pyplot.rcParams",
+   "name": "update"
+  }
+ ],
+ "pp.compute_energy": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "post_process",
+   "module_short": "post_process",
+   "name": "compute_energy"
+  }
+ ],
+ "pp.output_fields": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "post_process",
+   "module_short": "post_process",
+   "name": "output_fields"
+  }
+ ],
+ "tstep.nonlinear_solver_2D": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "time_steppers",
+   "module_short": "time_steppers",
+   "name": "nonlinear_solver_2D"
+  }
+ ]
+}

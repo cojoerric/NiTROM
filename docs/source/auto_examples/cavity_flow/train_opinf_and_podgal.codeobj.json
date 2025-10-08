@@ -1,0 +1,200 @@
+{
+ "MPI.COMM_WORLD": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "mpi4py.MPI",
+   "module_short": "mpi4py.MPI",
+   "name": "COMM_WORLD"
+  }
+ ],
+ "classes.mpi_pool": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "classes",
+   "module_short": "classes",
+   "name": "mpi_pool"
+  }
+ ],
+ "classes.optimization_objects": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "classes",
+   "module_short": "classes",
+   "name": "optimization_objects"
+  }
+ ],
+ "classes_cavity.flow_class": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "classes_cavity",
+   "module_short": "classes_cavity",
+   "name": "flow_class"
+  }
+ ],
+ "classes_cavity.fom_class": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "classes_cavity",
+   "module_short": "classes_cavity",
+   "name": "fom_class"
+  }
+ ],
+ "classes_cavity.linear_operators_2D": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "classes_cavity",
+   "module_short": "classes_cavity",
+   "name": "linear_operators_2D"
+  }
+ ],
+ "manifolds.Euclidean": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "pymanopt.manifolds",
+   "module_short": "pymanopt.manifolds",
+   "name": "Euclidean"
+  }
+ ],
+ "manifolds.Grassmann": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "pymanopt.manifolds",
+   "module_short": "pymanopt.manifolds",
+   "name": "Grassmann"
+  }
+ ],
+ "manifolds.Product": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "pymanopt.manifolds",
+   "module_short": "pymanopt.manifolds",
+   "name": "Product"
+  }
+ ],
+ "manifolds.Stiefel": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "pymanopt.manifolds",
+   "module_short": "pymanopt.manifolds",
+   "name": "Stiefel"
+  }
+ ],
+ "nitrom_functions.create_objective_and_gradient": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "nitrom_functions",
+   "module_short": "nitrom_functions",
+   "name": "create_objective_and_gradient"
+  }
+ ],
+ "np.arange": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "arange"
+  }
+ ],
+ "np.argmin": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "argmin"
+  }
+ ],
+ "np.eye": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "eye"
+  }
+ ],
+ "np.load": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "load"
+  }
+ ],
+ "np.logspace": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "logspace"
+  }
+ ],
+ "np.min": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "min"
+  }
+ ],
+ "np.save": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "save"
+  }
+ ],
+ "np.zeros": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "zeros"
+  }
+ ],
+ "opinf_fun.operator_inference": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "opinf_functions",
+   "module_short": "opinf_functions",
+   "name": "operator_inference"
+  }
+ ],
+ "plt.rcParams.update": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "matplotlib.pyplot.rcParams",
+   "module_short": "matplotlib.pyplot.rcParams",
+   "name": "update"
+  }
+ ],
+ "sys.path.append": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "sys.path",
+   "module_short": "sys.path",
+   "name": "append"
+  }
+ ]
+}

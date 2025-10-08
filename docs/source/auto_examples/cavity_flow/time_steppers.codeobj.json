@@ -1,0 +1,74 @@
+{
+ "np.isnan": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "isnan"
+  }
+ ],
+ "np.linalg.norm": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy.linalg",
+   "module_short": "numpy.linalg",
+   "name": "norm"
+  }
+ ],
+ "np.mod": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "mod"
+  }
+ ],
+ "np.zeros": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "zeros"
+  }
+ ],
+ "numbaops.divergence_boundary_conditions_2D": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numba_operators",
+   "module_short": "numba_operators",
+   "name": "divergence_boundary_conditions_2D"
+  }
+ ],
+ "numbaops.evaluate_bilinearity_2D": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numba_operators",
+   "module_short": "numba_operators",
+   "name": "evaluate_bilinearity_2D"
+  }
+ ],
+ "numbaops.laplacian_boundary_conditions_2D": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numba_operators",
+   "module_short": "numba_operators",
+   "name": "laplacian_boundary_conditions_2D"
+  }
+ ],
+ "tlib.perf_counter": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "time",
+   "module_short": "time",
+   "name": "perf_counter"
+  }
+ ]
+}

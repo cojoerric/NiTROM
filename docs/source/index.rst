@@ -10,7 +10,7 @@ NiTROM documentation
 .. `reStructuredText <https://www.sphinx-doc.org/en/master/usage/restructuredtext/index.html>`_
 .. documentation for details.
 
-NiTROM is the Python-based library for the Non-intrusive Trajectory-based optimization of Reduced-Order Models.
+NiTROM is the Python-based library for Non-intrusive Trajectory-based optimization of Reduced-Order Models.
  
 
 .. toctree::
@@ -18,3 +18,12 @@ NiTROM is the Python-based library for the Non-intrusive Trajectory-based optimi
    :caption: Contents:
 
 
+Examples
+========
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Examples
+
+   auto_examples/cavity_flow/index
+   auto_examples/cgl/index

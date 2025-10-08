@@ -1,0 +1,29 @@
+{
+ "np.float64": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "float64"
+  }
+ ],
+ "np.zeros": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "zeros"
+  }
+ ],
+ "numba.njit": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numba",
+   "module_short": "numba",
+   "name": "njit"
+  }
+ ]
+}
