@@ -6,12 +6,12 @@ nonlinear dynamics, as described in :cite:`padovan2024data`. The CGL equation
 is given by
 
 .. math::
-   $$
+   \begin{equation}
    \frac{\partial q}{\partial t} =
    \left( -\nu \frac{\partial}{\partial x} +
    \gamma \frac{\partial^2}{\partial x^2} + \mu \right) q
    - a |q|^2 q,
-   $$
+   \end{equation}
 
 where $x \in (-\infty, \infty)$, $q(x,t) \in \mathbb{C}$, and the parameters are
 $a = 0.1$, $\gamma = 1 - i$, $\nu = 2 + 0.4i$,
