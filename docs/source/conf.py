@@ -19,9 +19,9 @@ from unittest.mock import MagicMock
 
 
 # Mock everything in NiTROM to prevent imports that initialize MPI
-# sys.modules['NiTROM'] = MagicMock()
-# sys.modules['NiTROM.Optimization_Functions'] = MagicMock()
-# sys.modules['NiTROM.PyManopt_Functions'] = MagicMock()
+sys.modules['NiTROM'] = MagicMock()
+sys.modules['NiTROM.Optimization_Functions'] = MagicMock()
+sys.modules['NiTROM.PyManopt_Functions'] = MagicMock()
 
 project   = 'NiTROM'
 copyright = "2024, Alberto Padovan"
