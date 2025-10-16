@@ -6,23 +6,32 @@ from string import ascii_lowercase as ascii
 class mpi_pool:
 
     def __init__(self,comm,n_traj,fname_traj,fname_time,**kwargs):
-        
-        """ 
-        This class contains all the info regarding the MPI pool that will be used 
-        during optimization. It also loads the training data from disk. Every process
-        (with Id "self.rank") owns its own instance of this class and its own chunk of 
-        the training data. I.e., the whole training data set is distributed
-        across the whole MPI pool.  
-        
-        comm:           MPI Communicator
-        n_traj:         total number of trajectories we wish to load from disk
-        fname_traj:     e.g., 'traj_%03d.npy' (string used to load each trajectory)
-        fname_time:     e.g., 'time.txt' (time vector at which we save snapshots)
-        
-        Optional keyword arguments:
-            fname_weights:          e.g., 'weight_%03d.npy' 
-            fname_steady_forcing:   e.g., 'forcing_%03d.npy'
-            fname_derivs:           e.g., 'fname_derivs_%03d.npy'
+        """
+        Initialize MPI pool and load distributed training data.
+
+        Parameters
+        ----------
+        comm : mpi4py.MPI.Intracomm
+            MPI communicator.
+        n_traj : int
+            Total number of trajectories to load from disk.
+        fname_traj : str
+            Filename pattern used to load each trajectory, e.g. 'traj_%03d.npy'.
+        fname_time : str
+            Filename for the time vector, e.g. 'time.txt'.
+        **kwargs : optional
+            fname_weights : str, optional
+                Filename pattern for weights, e.g. 'weight_%03d.npy'.
+            fname_steady_forcing : str, optional
+                Filename pattern for steady forcing, e.g. 'forcing_%03d.npy'.
+            fname_derivs : str, optional
+                Filename pattern for time derivatives, e.g. 'fname_derivs_%03d.npy'.
+
+        Notes
+        -----
+        Each MPI process instantiates its own mpi_pool and loads only the subset
+        of trajectories assigned to that rank. The full dataset is distributed
+        across the MPI pool.
         """
 
         self.comm = comm                            # MPI communicator
@@ -55,7 +64,21 @@ class mpi_pool:
         
         
     def load_trajectories(self,fname_traj):
-        
+        """
+        Load trajectory files for the local MPI rank.
+
+        Parameters
+        ----------
+        fname_traj : str
+            Filename pattern for trajectories assigned to this process.
+
+        Notes
+        -----
+        The method populates:
+          - self.fnames_traj : list of filenames loaded by this rank
+          - self.X : numpy array of shape (my_n_traj, N, n_snapshots)
+          - self.N, self.n_snapshots : dimensions inferred from the first file
+        """
         self.fnames_traj = [fname_traj%(k+self.disps[self.rank]) for k in range (self.my_n_traj)]
         X = [np.load(self.fnames_traj[k]) for k in range (self.my_n_traj)]
         self.N, self.n_snapshots = X[0].shape
@@ -63,7 +86,18 @@ class mpi_pool:
         for k in range (self.my_n_traj): self.X[k,] = X[k]
         
     def load_weights(self,kwargs):
-        
+        """
+        Load per-trajectory weights if provided.
+
+        Parameters
+        ----------
+        kwargs : dict
+            Keyword arguments passed into __init__; looks for 'fname_weights'.
+
+        Notes
+        -----
+        If no weights file is provided, weights default to ones.
+        """        
         fname_weights = kwargs.get('fname_weights',None)
         self.weights = np.ones(self.my_n_traj)
         if fname_weights != None:
@@ -73,7 +107,19 @@ class mpi_pool:
             for k in range (self.my_n_traj): self.weights[k] = weights[k]
             
     def load_steady_forcing(self,kwargs):
-        
+        """
+        Load steady forcing vectors for each local trajectory if provided.
+
+        Parameters
+        ----------
+        kwargs : dict
+            Keyword arguments passed into __init__; looks for 'fname_steady_forcing'.
+
+        Notes
+        -----
+        Populates self.F with shape (N, my_n_traj). If no files are provided,
+        self.F remains a zero array.
+        """        
         fname_forcing = kwargs.get('fname_steady_forcing',None)
         self.F = np.zeros((self.N,self.my_n_traj))
         if fname_forcing != None:
@@ -81,7 +127,18 @@ class mpi_pool:
             for k in range (self.my_n_traj):  self.F[:,k] = np.load(self.fnames_forcing[k])
     
     def load_time_derivatives(self,kwargs):
-        
+        """
+        Load precomputed time derivatives for trajectories if provided.
+
+        Parameters
+        ----------
+        kwargs : dict
+            Keyword arguments passed into __init__; looks for 'fname_derivs'.
+
+        Notes
+        -----
+        Populates self.dX with shape (my_n_traj, N, n_snapshots) when files exist.
+        """        
         fname_deriv = kwargs.get('fname_derivs',None)
         if fname_deriv != None:
             self.fnames_deriv = [fname_deriv%(k+self.disps[self.rank]) for k in range (self.my_n_traj)]
@@ -92,29 +149,53 @@ class mpi_pool:
 class optimization_objects:
 
     def __init__(self,mpi_pool,which_trajs,which_times,leggauss_deg,nsave_rom,poly_comp,**kwargs):
-
-        """ 
-        This class contains the training data information that will get passed to pymanopt. 
-        
-        mpi_pool:       an instance of the mpi_pool class
-        which_trajs:    array of integers to extract a subset of the trajectories contained in 
-                        mpi_pool.X. Useful if we end up using stochastic gradient descent
-        which_times:    arrays of integers to extract a subset of a trajectory owned by mpi_pool. Useful
-                        if we want to start training on short trajectories and then progressively extend 
-                        the length of the trajectories
-        leggauss_deg:   number of Gauss-Legendre quadrature points used to approximate the integrals
-                        in the gradient (see Prop. 2.1 in NiTROM arXiv paper)
-        nsave_rom:      number of ROM snapshots to store in between two adjacent FOM snapshots
-        poly_comp:      component of the polynomial ROM (e.g., [1,2] is a quadratic model with both first and
-                                                         second order components) 
-
-        Optional keyword arguments:
-            which_fix:              one of fix_bases, fix_tensors or fix_none (default is fix_none)
-            stab_promoting_pen:     value of L2 regularization coefficient
-            stab_promoting_tf:      value of final time for stability promoting penalty
-            stab_promoting_ic:      random (unit-norm) vector to probe the stability penalty
         """
-        
+        Prepare training data information and optimization objects to be passed to the optimizer.
+
+        Parameters
+        ----------
+        mpi_pool : mpi_pool
+            Instance of the mpi_pool class containing distributed data.
+        which_trajs : array_like
+            Indices selecting trajectories from mpi_pool.X to include in this batch. 
+            Useful for stochastic gradient descent.
+        which_times : array_like
+            Indices selecting time snapshots to include from each trajectory. 
+            Useful if we want to start training on short trajectories and then progressively 
+            extend the length of the trajectories.
+        leggauss_deg : int
+            Number of Gauss–Legendre quadrature points for integral approximations. 
+            For further details, see Prop. 2.1 in NiTROM arXiv paper
+        nsave_rom : int
+            Number of ROM snapshots stored between successive FOM snapshots.
+        poly_comp : sequence of int
+            Polynomial components of the ROM; e.g. [1, 2] for linear and quadratic terms.
+
+            .. math::
+            f_r = A_r\hat{z} + B_ru + H_r:\hat{z}\hat{z}^T + L_r:\hat{z}u^T + \ldots
+
+            
+        **kwargs : optional
+            which_fix : {'fix_bases', 'fix_tensors', 'fix_none'}, default 'fix_none'
+                Which quantities to keep fixed during optimization.
+            stab_promoting_pen : float, optional
+                L2 regularization coefficient for stability-promoting penalty.
+            stab_promoting_tf : float, optional
+                Final time used by the stability-promoting penalty.
+            stab_promoting_ic : array_like, optional
+                Initial condition (random) normalized vector used to probe stability penalty.
+
+        Raises
+        ------
+        ValueError
+            If invalid which_fix provided, or if required stability penalty arguments are missing.
+
+        Notes
+        -----
+        This class slices mpi_pool data according to which_trajs and which_times,
+        rescales trajectory weights so the cost measures average error over snapshots
+        and trajectories, and generates einsum subscripts for efficient tensor contractions.
+        """        
         
         self.X = mpi_pool.X[which_trajs,:,:]      
         self.X = self.X[:,:,which_times]

@@ -1,0 +1,398 @@
+{
+ "MPI.COMM_WORLD": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "mpi4py.MPI",
+   "module_short": "mpi4py.MPI",
+   "name": "COMM_WORLD"
+  }
+ ],
+ "classes.mpi_pool": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "NiTROM.Optimization_Functions.classes",
+   "module_short": "NiTROM.Optimization_Functions.classes",
+   "name": "mpi_pool"
+  }
+ ],
+ "classes.optimization_objects": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "NiTROM.Optimization_Functions.classes",
+   "module_short": "NiTROM.Optimization_Functions.classes",
+   "name": "optimization_objects"
+  }
+ ],
+ "classes_cavity.flow_class": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "classes_cavity",
+   "module_short": "classes_cavity",
+   "name": "flow_class"
+  }
+ ],
+ "classes_cavity.fom_class": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "classes_cavity",
+   "module_short": "classes_cavity",
+   "name": "fom_class"
+  }
+ ],
+ "classes_cavity.linear_operators_2D": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "classes_cavity",
+   "module_short": "classes_cavity",
+   "name": "linear_operators_2D"
+  }
+ ],
+ "manifolds.Euclidean": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "pymanopt.manifolds",
+   "module_short": "pymanopt.manifolds",
+   "name": "Euclidean"
+  }
+ ],
+ "manifolds.Grassmann": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "pymanopt.manifolds",
+   "module_short": "pymanopt.manifolds",
+   "name": "Grassmann"
+  }
+ ],
+ "manifolds.Product": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "pymanopt.manifolds",
+   "module_short": "pymanopt.manifolds",
+   "name": "Product"
+  }
+ ],
+ "manifolds.Stiefel": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "pymanopt.manifolds",
+   "module_short": "pymanopt.manifolds",
+   "name": "Stiefel"
+  }
+ ],
+ "nitrom_functions.create_objective_and_gradient": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "NiTROM.Optimization_Functions.nitrom_functions",
+   "module_short": "NiTROM.Optimization_Functions.nitrom_functions",
+   "name": "create_objective_and_gradient"
+  }
+ ],
+ "np.arange": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "arange"
+  }
+ ],
+ "np.argmin": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "argmin"
+  }
+ ],
+ "np.cumsum": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "cumsum"
+  }
+ ],
+ "np.einsum": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "einsum"
+  }
+ ],
+ "np.eye": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "eye"
+  }
+ ],
+ "np.flipud": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "flipud"
+  }
+ ],
+ "np.linalg.norm": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy.linalg",
+   "module_short": "numpy.linalg",
+   "name": "norm"
+  }
+ ],
+ "np.load": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "load"
+  }
+ ],
+ "np.logspace": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "logspace"
+  }
+ ],
+ "np.max": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "max"
+  }
+ ],
+ "np.mean": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "mean"
+  }
+ ],
+ "np.min": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "min"
+  }
+ ],
+ "np.pi": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "pi"
+  }
+ ],
+ "np.random.randn": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy.random",
+   "module_short": "numpy.random",
+   "name": "randn"
+  }
+ ],
+ "np.save": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "save"
+  }
+ ],
+ "np.sin": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "sin"
+  }
+ ],
+ "np.sum": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "sum"
+  }
+ ],
+ "np.zeros": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "zeros"
+  }
+ ],
+ "np.zeros_like": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "zeros_like"
+  }
+ ],
+ "numba_ops.divergence_boundary_conditions_2D_znmf": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numba_operators",
+   "module_short": "numba_operators",
+   "name": "divergence_boundary_conditions_2D_znmf"
+  }
+ ],
+ "opinf_fun.operator_inference": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "NiTROM.Optimization_Functions.opinf_functions",
+   "module_short": "NiTROM.Optimization_Functions.opinf_functions",
+   "name": "operator_inference"
+  }
+ ],
+ "plt.cm.get_cmap": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "matplotlib.pyplot.cm",
+   "module_short": "matplotlib.pyplot.cm",
+   "name": "get_cmap"
+  }
+ ],
+ "plt.colorbar": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "matplotlib.pyplot",
+   "module_short": "matplotlib.pyplot",
+   "name": "colorbar"
+  }
+ ],
+ "plt.contourf": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "matplotlib.pyplot",
+   "module_short": "matplotlib.pyplot",
+   "name": "contourf"
+  }
+ ],
+ "plt.figure": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "matplotlib.pyplot",
+   "module_short": "matplotlib.pyplot",
+   "name": "figure"
+  }
+ ],
+ "plt.gca": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "matplotlib.pyplot",
+   "module_short": "matplotlib.pyplot",
+   "name": "gca"
+  }
+ ],
+ "plt.plot": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "matplotlib.pyplot",
+   "module_short": "matplotlib.pyplot",
+   "name": "plot"
+  }
+ ],
+ "plt.rcParams.update": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "matplotlib.pyplot.rcParams",
+   "module_short": "matplotlib.pyplot.rcParams",
+   "name": "update"
+  }
+ ],
+ "pp.output_fields": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "post_process",
+   "module_short": "post_process",
+   "name": "output_fields"
+  }
+ ],
+ "sciplin.svd": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "scipy.linalg",
+   "module_short": "scipy.linalg",
+   "name": "svd"
+  }
+ ],
+ "sys.path.append": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "sys.path",
+   "module_short": "sys.path",
+   "name": "append"
+  }
+ ],
+ "tlib.time": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "time",
+   "module_short": "time",
+   "name": "time"
+  }
+ ],
+ "tstep.solver_2D": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "time_steppers",
+   "module_short": "time_steppers",
+   "name": "solver_2D"
+  }
+ ]
+}

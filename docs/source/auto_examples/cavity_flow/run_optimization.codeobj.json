@@ -1,0 +1,263 @@
+{
+ "AdaptiveLineSearcher": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "pymanopt.optimizers.line_search",
+   "module_short": "pymanopt.optimizers.line_search",
+   "name": "AdaptiveLineSearcher"
+  }
+ ],
+ "manifolds.Euclidean": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "pymanopt.manifolds",
+   "module_short": "pymanopt.manifolds",
+   "name": "Euclidean"
+  }
+ ],
+ "manifolds.Grassmann": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "pymanopt.manifolds",
+   "module_short": "pymanopt.manifolds",
+   "name": "Grassmann"
+  }
+ ],
+ "manifolds.Product": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "pymanopt.manifolds",
+   "module_short": "pymanopt.manifolds",
+   "name": "Product"
+  }
+ ],
+ "manifolds.Stiefel": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "pymanopt.manifolds",
+   "module_short": "pymanopt.manifolds",
+   "name": "Stiefel"
+  }
+ ],
+ "np.arange": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "arange"
+  }
+ ],
+ "np.argwhere": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "argwhere"
+  }
+ ],
+ "np.diag": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "diag"
+  }
+ ],
+ "np.linalg.norm": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy.linalg",
+   "module_short": "numpy.linalg",
+   "name": "norm"
+  }
+ ],
+ "np.loadtxt": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "loadtxt"
+  }
+ ],
+ "np.mean": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "mean"
+  }
+ ],
+ "np.mod": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "mod"
+  }
+ ],
+ "np.ones": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "ones"
+  }
+ ],
+ "np.random.randn": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy.random",
+   "module_short": "numpy.random",
+   "name": "randn"
+  }
+ ],
+ "np.savetxt": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "savetxt"
+  }
+ ],
+ "np.zeros": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "numpy",
+   "module_short": "numpy",
+   "name": "zeros"
+  }
+ ],
+ "opt_functions.create_objective_and_gradient_parallel": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "optimization_functions",
+   "module_short": "optimization_functions",
+   "name": "create_objective_and_gradient_parallel"
+  }
+ ],
+ "opt_functions.optimization_objects": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "optimization_functions",
+   "module_short": "optimization_functions",
+   "name": "optimization_objects"
+  }
+ ],
+ "optimizers.ConjugateGradient": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "pymanopt.optimizers",
+   "module_short": "pymanopt.optimizers",
+   "name": "ConjugateGradient"
+  }
+ ],
+ "pymanopt.Problem": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "pymanopt",
+   "module_short": "pymanopt",
+   "name": "Problem"
+  }
+ ],
+ "scipy.linalg.eig": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "scipy.linalg",
+   "module_short": "scipy.linalg",
+   "name": "eig"
+  }
+ ],
+ "scipy.linalg.inv": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "scipy.linalg",
+   "module_short": "scipy.linalg",
+   "name": "inv"
+  }
+ ],
+ "torch.cuda.current_device": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "torch.cuda",
+   "module_short": "torch.cuda",
+   "name": "current_device"
+  }
+ ],
+ "torch.cuda.is_available": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "torch.cuda",
+   "module_short": "torch.cuda",
+   "name": "is_available"
+  }
+ ],
+ "torch.device": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "torch",
+   "module_short": "torch",
+   "name": "device"
+  }
+ ],
+ "torch.from_numpy": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "torch",
+   "module_short": "torch",
+   "name": "from_numpy"
+  }
+ ],
+ "torch.int64": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "torch",
+   "module_short": "torch",
+   "name": "int64"
+  }
+ ],
+ "torch.sparse_csc_tensor": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "torch",
+   "module_short": "torch",
+   "name": "sparse_csc_tensor"
+  }
+ ],
+ "torch.tensor": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "torch",
+   "module_short": "torch",
+   "name": "tensor"
+  }
+ ]
+}
