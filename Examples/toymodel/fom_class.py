@@ -1,16 +1,15 @@
-import torch
+import numpy as np 
+import scipy.linalg as sciplin
 
 
 class full_order_model:
         
-    def __init__(self,A2,A3,B,C,device='cpu',dtype=torch.float32):
+    def __init__(self,A2,A3,B,C):
         
         self.A2 = A2    # Linear tensor (i.e., a matrix)
         self.A3 = A3    # Quadratic tesors (i.e., third-order)
         self.B = B      # The input matrix
         self.C = C      # The output matrix
-        self.device = device
-        self.dtype = dtype
         
         
     def evaluate_fom_dynamics(self,t,q,u):
@@ -20,9 +19,9 @@ class full_order_model:
             fu is an scipy interpolator for the input 
         """
         
-        f = u.detach() if hasattr(u,"__len__") == True else u(t)
-        if torch.linalg.vector_norm(q) >= 1e4:    vec = 0*q
-        else:                           vec = self.A2@q + torch.einsum('ijk,j,k',self.A3,q,q) + f
+        f = u.copy() if hasattr(u,"__len__") == True else u(t)
+        if np.linalg.norm(q) >= 1e4:    vec = 0*q
+        else:                           vec = self.A2@q + np.einsum('ijk,j,k',self.A3,q,q) + f
         
         return vec
     
@@ -32,14 +31,14 @@ class full_order_model:
             scipy interpolator for the base flow
         """
         
-        if torch.linalg.vector_norm(q) >= 1e4:    vec = 0*q
-        else:                           vec = (self.A2 + torch.einsum('ijk,j',self.A3,fQ(t)) + \
-                                               torch.einsum('ijk,k',self.A3,fQ(t))).T@q 
+        if np.linalg.norm(q) >= 1e4:    vec = 0*q
+        else:                           vec = (self.A2 + np.einsum('ijk,j',self.A3,fQ(t)) + \
+                                               np.einsum('ijk,k',self.A3,fQ(t))).T@q 
         
         return vec
     
     def compute_output(self,q):
-        return torch.matmul(self.C,q)
+        return self.C@q
     
     def compute_output_derivative(self,q):
         return self.C
@@ -51,13 +50,13 @@ class full_order_model:
         """
         
         n, r = Phi.shape
-        PhiF = Phi@torch.linalg.inv(Psi.T@Phi)
+        PhiF = Phi@sciplin.inv(Psi.T@Phi)
         
         A2r = Psi.T@self.A2@PhiF
-        A3r = torch.zeros((r,r,r), device=self.device, dtype=self.dtype)
+        A3r = np.zeros((r,r,r))
         for i in range (r):
             for j in range (r):
-                A3r[:,i,j] = Psi.T@torch.einsum('kij,i,j',self.A3,PhiF[:,i],PhiF[:,j])
+                A3r[:,i,j] = Psi.T@np.einsum('kij,i,j',self.A3,PhiF[:,i],PhiF[:,j])
                 
         Br = Psi.T@self.B 
         Cr = self.compute_output(PhiF)

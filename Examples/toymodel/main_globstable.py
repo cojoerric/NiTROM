@@ -1,8 +1,7 @@
-import numpy as np 
 import torch
 import matplotlib.pyplot as plt
 
-from NiTROM.Optimization_Functions import classes, nitrom_models as model
+from NiTROM.Optimization_Functions import classes, nitrom_models as model, utils
 from NiTROM.PyTorch_Functions import gpu_utils, train, integrators
 import fom_class_pytorch
 
@@ -21,7 +20,7 @@ cPOD, cOI, cTR, cOPT = '#66c2a5', '#fc8d62', '#8da0cb', '#e78ac3'
 lPOD, lOI, lTR, lOPT = 'solid', 'dotted', 'dashed', 'dashdot'
 
 device, rank, world_size = gpu_utils.setup_distributed_gpus()
-dtype = torch.float64
+dtype = torch.float32
 if rank == 0:
     print(f"Using {world_size} GPU(s) for distributed training.")
     verb = 2
@@ -82,21 +81,21 @@ psi_pod = phi_pod.clone()
 tensors_pod, _ = fom.assemble_petrov_galerkin_tensors(phi_pod,psi_pod)
 A_pod, H_pod = tensors_pod
 
-init = {"Phi":phi_pod,
-        "Psi":psi_pod,
-        "A2":A_pod,
-        "A3":H_pod
-}
+init = utils.create_intitial_guess(A_pod, H_pod, r=r)
+init["Phi"] = phi_pod.clone()
+init["Psi"] = psi_pod.clone()
 
-params = model.NitromParams(pool, r, poly_comp, init=init, requires_grad=True)
+params = model.NitromParams_GlobStable(pool, r, poly_comp, init=init, requires_grad=True)
 model = model.NitromModel(params, opt_obj=opt_obj, fom=fom).to(device)
-optimizer = torch.optim.LBFGS(model.parameters(), lr=1.0, max_iter=20, history_size=10, line_search_fn='strong_wolfe')
+optimizer = torch.optim.LBFGS(model.parameters(), lr=1.0, max_iter=5, history_size=10, line_search_fn='strong_wolfe')
+# optimizer = torch.optim.AdamW(model.parameters(), lr=1e-1)
+# scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10)
 
 # do_gradcheck = True
 # if do_gradcheck and rank == 0:
-#     utils.finite_difference_gradcheck(model, n_samples=4, eps=1e-5, seed=0)
+#     utils.finite_difference_gradcheck(model, n_samples=4, eps=1e-6, seed=0)
 
-num_epochs = 20
+num_epochs = 50
 model, history = train.train_model(
     model,
     pool,
@@ -104,12 +103,16 @@ model, history = train.train_model(
     num_epochs,
     log_every=1,
     manifold_retraction="qr",
+    scheduler=None,
 )
 
 phi_nit = model.params.Phi.detach()
 psi_nit = model.params.Psi.detach()
-A_nit = model.params.A2.detach()
-H_nit = model.params.A3.detach()
+Qhat = model.params.Qhat.detach()
+Jhat = model.params.Jhat.detach()
+Rhat = model.params.Rhat.detach()
+Hhat = model.params.Hhat.detach()
+A_nit, H_nit = utils.construct_operators((Qhat, Jhat, Rhat, Hhat), poly_comp)[0]
 tensors_nit = (A_nit, H_nit)
 
 
@@ -144,4 +147,4 @@ plt.xlabel('Time')
 plt.ylabel('Error')
 plt.legend()
 plt.tight_layout()
-plt.savefig('figures/error_20')
+plt.savefig('figures/error_20_globstable_lbfgs')
