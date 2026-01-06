@@ -119,6 +119,8 @@ class optimization_objects:
         if len(local_which_trajs) > 0:
             self.X = pool.X[local_which_trajs,:,:]
             self.X = self.X[:,:,which_times]
+            self.dX = pool.dX[local_which_trajs,:,:]
+            self.dX = self.dX[:,:,which_times]
             self.F = pool.F[:,local_which_trajs]
             self.weights = pool.weights[local_which_trajs]
         else:

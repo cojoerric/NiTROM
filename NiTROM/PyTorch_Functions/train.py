@@ -73,15 +73,23 @@ def train_model(
                 for g in grads:
                     dist.all_reduce(g, op=dist.ReduceOp.SUM)
 
-            for p, g in zip(params.tensors(), grad_tensors):
-                p.grad = g if isinstance(g, torch.Tensor) else torch.tensor(g, device=p.device, dtype=p.dtype)
-
             params = model.params
+            n_tensors = len(params.tensor_names())
             if model.name == 'nitrom':
+                if len(grads) != n_tensors + 2:
+                    raise ValueError(
+                        "Unexpected gradient tuple size. Expected tensors + Phi + Psi."
+                    )
                 grad_Phi = grads[0]
                 grad_Psi = grads[1]
                 grad_tensors = grads[2:]
+            else:
+                grad_tensors = grads
 
+            for p, g in zip(params.tensors(), grad_tensors):
+                p.grad = g if isinstance(g, torch.Tensor) else torch.tensor(g, device=p.device, dtype=p.dtype)
+
+            if model.name == 'nitrom':
                 if manifold_retraction == "qr":
                     for p in (params.Phi, params.Psi):
                         p.grad = None

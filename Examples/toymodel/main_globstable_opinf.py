@@ -1,7 +1,7 @@
 import torch
 import matplotlib.pyplot as plt
 
-from NiTROM.Optimization_Functions import classes, nitrom_models as model, utils
+from NiTROM.Optimization_Functions import classes, opinf_models as model, utils
 from NiTROM.PyTorch_Functions import gpu_utils, train, integrators
 import fom_class_pytorch
 
@@ -82,38 +82,34 @@ tensors_pod, _ = fom.assemble_petrov_galerkin_tensors(phi_pod,psi_pod)
 A_pod, H_pod = tensors_pod
 
 init = utils.create_intitial_guess(A_pod, H_pod, r=r)
-init["Phi"] = phi_pod.clone()
-init["Psi"] = psi_pod.clone()
 
-params = model.NitromParams_GloballyStable(pool, r, poly_comp, init=init, requires_grad=True)
-model = model.NitromModel(params, opt_obj=opt_obj, fom=fom).to(device)
-optimizer = torch.optim.LBFGS(model.parameters(), lr=1.0, max_iter=5, history_size=10, line_search_fn='strong_wolfe')
-# optimizer = torch.optim.AdamW(model.parameters(), lr=1e-1)
-# scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10)
+params = model.OpinfParams_GloballyStable(pool, r, poly_comp, init=init, requires_grad=True)
+model = model.OpinfModel(phi_pod, params, opt_obj=opt_obj).to(device)
+# optimizer = torch.optim.LBFGS(model.parameters(), lr=1.0, max_iter=5, history_size=10, line_search_fn='strong_wolfe')
+optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10)
 
 # do_gradcheck = True
 # if do_gradcheck and rank == 0:
 #     utils.finite_difference_gradcheck(model, n_samples=4, eps=1e-6, seed=0)
 
-num_epochs = 25
+num_epochs = 50000
 model, history = train.train_model(
     model,
     pool,
     optimizer,
     num_epochs,
-    log_every=1,
+    log_every=5000,
     manifold_retraction="qr",
-    scheduler=None,
+    scheduler=scheduler,
 )
 
-phi_nit = model.params.Phi.detach()
-psi_nit = model.params.Psi.detach()
 Qhat = model.params.Qhat.detach()
 Jhat = model.params.Jhat.detach()
 Rhat = model.params.Rhat.detach()
 Hhat = model.params.Hhat.detach()
-A_nit, H_nit = utils.construct_operators((Qhat, Jhat, Rhat, Hhat), poly_comp)[0]
-tensors_nit = (A_nit, H_nit)
+A_oi, H_oi = utils.construct_operators((Qhat, Jhat, Rhat, Hhat), poly_comp)[0]
+tensors_oi = (A_oi, H_oi)
 
 
 # Plot errors
@@ -121,7 +117,7 @@ max_val = 5/20
 betas = torch.rand(100, dtype=dtype, device=device)*0.999*max_val
 t_eval = torch.linspace(0, 10, steps=100, device=device, dtype=dtype)
 error_pod = torch.zeros_like(t_eval)
-error_nit = torch.zeros_like(t_eval)
+error_oi = torch.zeros_like(t_eval)
 
 for k in range(len(betas)):
     u = betas[k]*torch.ones(n, device=device, dtype=dtype)
@@ -136,15 +132,15 @@ for k in range(len(betas)):
     sol_pod = phi_pod @ sol_pod_r
     error_pod += torch.norm(C @ (sol_pod - sol), dim=0)**2 / weight / len(betas)
 
-    sol_nit_r = integrators.my_rk4_adaptive(opt_obj.evaluate_rom_rhs, t_eval, z0, args=(psi_nit.T@u,) + tensors_nit)
-    sol_nit = phi_nit @ sol_nit_r
-    error_nit += torch.norm(C @ (sol_nit - sol), dim=0)**2 / weight / len(betas)
+    sol_oi_r = integrators.my_rk4_adaptive(opt_obj.evaluate_rom_rhs, t_eval, z0, args=(psi_pod.T@u,) + tensors_oi)
+    sol_oi = phi_pod @ sol_oi_r
+    error_oi += torch.norm(C @ (sol_oi - sol), dim=0)**2 / weight / len(betas)
 
 plt.figure()
 plt.semilogy(t_eval.cpu(), error_pod.cpu(), label='POD', color=cPOD, linestyle=lPOD)
-plt.semilogy(t_eval.cpu(), error_nit.cpu(), label='NiTROM', color=cOPT, linestyle=lOPT)
+plt.semilogy(t_eval.cpu(), error_oi.cpu(), label='OpInf', color=cOPT, linestyle=lOPT)
 plt.xlabel('Time')
 plt.ylabel('Error')
 plt.legend()
 plt.tight_layout()
-plt.savefig('figures/error_20_globstable_lbfgs')
+plt.savefig('figures/error_20_globstable_opinf')
