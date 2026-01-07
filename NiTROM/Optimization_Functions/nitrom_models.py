@@ -118,9 +118,9 @@ class NitromModel(nn.Module):
     def __init__(
         self,
         params: nn.Module,
-        *,
         opt_obj,
         fom,
+        *,
         return_numpy: bool = False,
     ):
         super().__init__()

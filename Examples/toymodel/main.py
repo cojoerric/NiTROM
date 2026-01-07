@@ -1,4 +1,3 @@
-import numpy as np 
 import torch
 import matplotlib.pyplot as plt
 
@@ -23,10 +22,8 @@ lPOD, lOI, lTR, lOPT = 'solid', 'dotted', 'dashed', 'dashdot'
 device, rank, world_size = gpu_utils.setup_distributed_gpus()
 dtype = torch.float64
 if rank == 0:
-    print(f"Using {world_size} GPU(s) for distributed training.")
-    verb = 2
-else:
-    verb = 0
+    print(f"Using {world_size} devices for distributed training.")
+    print(f"Device: {device}")
 
 n = 3
 n_traj = 4
@@ -89,7 +86,7 @@ init = {"Phi":phi_pod,
 }
 
 params = model.NitromParams(pool, r, poly_comp, init=init, requires_grad=True)
-model = model.NitromModel(params, opt_obj=opt_obj, fom=fom).to(device)
+model = model.NitromModel(params, opt_obj, fom).to(device)
 optimizer = torch.optim.LBFGS(model.parameters(), lr=1.0, max_iter=20, history_size=10, line_search_fn='strong_wolfe')
 
 # do_gradcheck = True

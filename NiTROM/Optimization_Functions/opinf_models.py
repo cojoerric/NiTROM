@@ -97,8 +97,9 @@ class OpinfModel(nn.Module):
             self,
             phi,
             params: nn.Module,
-            *,
             opt_obj,
+            *,
+            regularization_H: float = 0.0,
             return_numpy:bool = False,
     ):
         super().__init__()
@@ -116,7 +117,8 @@ class OpinfModel(nn.Module):
             phi,
             glob_stable=self.glob_stable,
             poly_comp=params._poly_comp,
-            return_numpy=return_numpy
+            regularization_H=regularization_H,
+            return_numpy=return_numpy,
         )
 
     def forward(self):

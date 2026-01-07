@@ -8,6 +8,7 @@ def create_objective_and_gradient(*args, **kwargs):
     glob_stable = kwargs.get('glob_stable', False)
     poly_comp = kwargs.get('poly_comp', None)
     return_numpy = kwargs.get('return_numpy', False)
+    regularization_H = kwargs.get('regularization_H', 0.0)
 
     B = opt_obj.my_n_traj
     n, r = phi.shape
@@ -31,7 +32,7 @@ def create_objective_and_gradient(*args, **kwargs):
         quadratic_term = torch.einsum('ijk,bjt,bkt->bit', H, Z, Z)
         R = dZ - (linear_term + quadratic_term)
         R_flat = R.permute(1, 0, 2).reshape(r, B*T)
-        loss = ((R_flat @ W) * R_flat).sum()
+        loss = ((R_flat @ W) * R_flat).sum() + regularization_H * torch.norm(H)**2
 
         if return_numpy:
             loss = loss.cpu().numpy()
@@ -54,6 +55,7 @@ def create_objective_and_gradient(*args, **kwargs):
         
         grad_A = -2 * torch.einsum('bit,bjt->ij', RW, Z)
         grad_H = -2 * torch.einsum('bit,bjt,bkt->ijk', RW, Z, Z)
+        grad_H += 2 * regularization_H * H
         grads = (grad_A, grad_H)
 
         if glob_stable:

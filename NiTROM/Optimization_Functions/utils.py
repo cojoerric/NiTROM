@@ -156,3 +156,18 @@ def finite_difference_gradcheck(model, n_samples=10, eps=1e-6, seed=0):
             mean_abs_err /= n_samples
             mean_rel_err /= n_samples
             print(f"  {name}: mean_abs_err={mean_abs_err:.3e}, mean_rel_err={mean_rel_err:.3e}")
+
+def perform_POD(pool, r):
+
+    device = pool.device
+    dtype = pool.dtype
+
+    N = pool.n_snapshots*pool.n_traj
+    X = torch.zeros((pool.X.shape[1],N), device=device, dtype=dtype)
+    for i in range (pool.n_traj):
+        X[:,i*pool.n_snapshots:(i+1)*pool.n_snapshots] = pool.X[i,]
+        
+    phi_pod, _, _ = torch.linalg.svd(X,full_matrices=False)
+    phi_pod = phi_pod[:,:r]
+
+    return phi_pod

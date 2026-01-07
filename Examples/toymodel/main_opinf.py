@@ -88,7 +88,7 @@ init = {
 }
 
 params = model.OpinfParams(pool, r, poly_comp, init=init, requires_grad=True)
-model = model.OpinfModel(phi_pod, params, opt_obj=opt_obj).to(device)
+model = model.OpinfModel(phi_pod, params, opt_obj).to(device)
 optimizer = torch.optim.LBFGS(model.parameters(), lr=1.0, max_iter=20, history_size=10, line_search_fn='strong_wolfe')
 
 # do_gradcheck = True
