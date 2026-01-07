@@ -21,6 +21,8 @@ def create_objective_and_gradient(*args, **kwargs):
     glob_stable = kwargs.get('glob_stable', False)
     poly_comp = kwargs.get('poly_comp', None)
     return_numpy = kwargs.get('return_numpy', False)
+    integrator = my_etdrk4
+    internal_steps = 5
 
 
     def cost(*params):
@@ -42,7 +44,6 @@ def create_objective_and_gradient(*args, **kwargs):
         D, V = torch.linalg.eig(tensors[0])
         V_inv = torch.linalg.inv(V)
         linop = V, D, V_inv
-        internal_steps = 1
         dt = (opt_obj.time[1] - opt_obj.time[0])/internal_steps
         etdrk4_coefs = etdrk4_setup(linop, dt)
 
@@ -56,8 +57,10 @@ def create_objective_and_gradient(*args, **kwargs):
             # u_k = Psi.T @ F[:,k] => u = F.T @ Psi -> (B, r)
             u_batch = opt_obj.F.T @ Psi                  # (B, r)
 
-            # sol = my_etdrk4(etdrk4_coefs, opt_obj.evaluate_rom_rhs_nonlinear, opt_obj.time, z0, internal_steps, args=(u_batch,)+tensors)  # (B, r, T)
-            sol = my_rk4_adaptive(opt_obj.evaluate_rom_rhs, opt_obj.time, z0, args=(u_batch,)+tensors)
+            if integrator == my_etdrk4:
+                sol = integrator(etdrk4_coefs, opt_obj.evaluate_rom_rhs_nonlinear, opt_obj.time, z0, internal_steps, args=(u_batch,)+tensors)  # (B, r, T)
+            else:
+                sol = integrator(opt_obj.evaluate_rom_rhs, opt_obj.time, z0, args=(u_batch,)+tensors)
 
             # Compute outputs in batch
             # y_true = C @ X  -> (B, 1, T); y_model = C @ (PhiF @ Z) -> (B, 1, T)
@@ -70,7 +73,10 @@ def create_objective_and_gradient(*args, **kwargs):
 
         if opt_obj.l2_pen is not None and pool.rank == 0:
             time_pen = torch.linspace(0,opt_obj.pen_tf,opt_obj.n_snapshots*opt_obj.nsave_rom,device=pool.device)
-            Z = my_etdrk4(etdrk4_coefs,lambda t,z: 0*z,time_pen,opt_obj.randic)
+            if integrator == my_etdrk4:
+                Z = integrator(etdrk4_coefs,lambda t,z: 0*z,time_pen,opt_obj.randic)
+            else:
+                Z = integrator(opt_obj.evaluate_rom_rhs, opt_obj.time, z0, args=(u_batch,)+tensors)
             J += opt_obj.l2_pen*torch.dot(Z[:,-1],Z[:,-1])
 
         if return_numpy:
@@ -98,7 +104,6 @@ def create_objective_and_gradient(*args, **kwargs):
         V_inv = torch.linalg.inv(V)
         linop = V, D, V_inv
         linop_T = V_inv.T, D, V.T
-        internal_steps = 1
         dt = (opt_obj.time[1] - opt_obj.time[0])/internal_steps
         dt2 = dt / (opt_obj.nsave_rom-1)
         etdrk4_coefs = etdrk4_setup(linop, dt)
@@ -136,8 +141,10 @@ def create_objective_and_gradient(*args, **kwargs):
             # u_k = Psi.T @ F[:,k] => u = F.T @ Psi -> (B, r)
             u_batch = opt_obj.F.T @ Psi                  # (B, r)
 
-            # Z = my_etdrk4(etdrk4_coefs, opt_obj.evaluate_rom_rhs_nonlinear, opt_obj.time, z0, internal_steps, args=(u_batch,)+tensors)  # (B, r, T)
-            Z = my_rk4_adaptive(opt_obj.evaluate_rom_rhs, opt_obj.time, z0, args=(u_batch,)+tensors)
+            if integrator == my_etdrk4:
+                Z = integrator(etdrk4_coefs, opt_obj.evaluate_rom_rhs_nonlinear, opt_obj.time, z0, internal_steps, args=(u_batch,)+tensors)  # (B, r, T)
+            else:
+                Z = integrator(opt_obj.evaluate_rom_rhs, opt_obj.time, z0, args=(u_batch,)+tensors)
 
             # X_z = PhiF@Z
             X_z = torch.einsum('jk, ikm -> ijm', PhiF, Z) # (B, n, T) = (n, r) x (B, r, T)
@@ -201,8 +208,10 @@ def create_objective_and_gradient(*args, **kwargs):
                 # Z_j = torch.fliplr(sol_j)
                 # fZ = Interp1D(time_rom_j,Z_j,extrapolate=True)
 
-                # sol_j = my_etdrk4(etdrk4_coefs_2, opt_obj.evaluate_rom_rhs_nonlinear, time_rom_j, z0_j, internal_steps, args=(u_batch,)+tensors)  # (B, r, T)
-                sol_j = my_rk4_adaptive(opt_obj.evaluate_rom_rhs, time_rom_j, z0_j, args=(u_batch,)+tensors)
+                if integrator == my_etdrk4:
+                    sol_j = integrator(etdrk4_coefs_2, opt_obj.evaluate_rom_rhs_nonlinear, time_rom_j, z0_j, internal_steps, args=(u_batch,)+tensors)  # (B, r, T)
+                else:
+                    sol_j = integrator(opt_obj.evaluate_rom_rhs, time_rom_j, z0_j, args=(u_batch,)+tensors)
                 Z_j = torch.flip(sol_j, dims=[-1])
                 fZ = Interp1D(time_rom_j,Z_j,extrapolate=True)
 
@@ -216,8 +225,10 @@ def create_objective_and_gradient(*args, **kwargs):
                 # Z_j = torch.fliplr(Z_j)
 
                 lam_j_0 += 2 * PCtej / alpha[:, None]
-                # sol_lam = my_etdrk4(etdrk4_coefs_T2,opt_obj.evaluate_rom_adjoint_nonlinear,time_rom_j,lam_j_0,internal_steps,args=(fZ,)+tensors)
-                sol_lam = my_rk4_adaptive(opt_obj.evaluate_rom_adjoint, time_rom_j, lam_j_0, args=(fZ,)+tensors)
+                if integrator == my_etdrk4:
+                    sol_lam = integrator(etdrk4_coefs_T2,opt_obj.evaluate_rom_adjoint_nonlinear,time_rom_j,lam_j_0,internal_steps,args=(fZ,)+tensors)
+                else:
+                    sol_lam = integrator(opt_obj.evaluate_rom_adjoint, time_rom_j, lam_j_0, args=(fZ,)+tensors)
                 Lam = torch.flip(sol_lam, dims=[-1])
                 lam_j_0 = Lam[:, :, 0]
                 Z_j = torch.flip(Z_j, dims=[-1])

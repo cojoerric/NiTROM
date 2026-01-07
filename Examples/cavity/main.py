@@ -88,6 +88,7 @@ psi_pod = torch.tensor(psi_pod, device=device, dtype=dtype)
 
 
 ## Compute POD model
+print("\nComputing POD Model...")
 tensors_pod, _ = fom.assemble_petrov_galerkin_tensors(phi_tot, psi_tot)
 np.save('results/A_pod.npy', tensors_pod[0])
 np.save('results/H_pod.npy', tensors_pod[1])
@@ -110,16 +111,16 @@ init = {
     "A2": A_pod,
     "A3": H_pod,
 }
-params_oi = oi_model.OpinfParams_GloballyStable(pool, r, poly_comp, init=init, requires_grad=True)
+params_oi = oi_model.OpinfParams_GloballyStable(pool, r, poly_comp, init=init, requires_grad=True).to(device)
 model_oi = oi_model.OpinfModel(phi_pod, params_oi, opt_obj).to(device)
-optimizer_oi = torch.optim.LBFGS(model_oi.parameters(), lr=1.0, max_iter=20, history_size=50, line_search_fn='strong_wolfe')
+optimizer_oi = torch.optim.LBFGS(model_oi.parameters(), lr=1.0, max_iter=20, history_size=10, line_search_fn='strong_wolfe')
 
 model_oi, history = train.train_model(
     model_oi,
     pool,
     optimizer_oi,
-    num_epochs=500,
-    log_every=50,
+    num_epochs=100,
+    log_every=25,
 )
 
 Qhat = model_oi.params.Qhat.detach()
@@ -141,9 +142,9 @@ init = {
     "A2": A_pod,
     "A3": H_pod,
 }
-params_nit = nit_model.NitromParams(pool, r, poly_comp, init=init, requires_grad=True)
+params_nit = nit_model.NitromParams(pool, r, poly_comp, init=init, requires_grad=True).to(device)
 model_nit = nit_model.NitromModel(params_nit, opt_obj, fom).to(device)
-optimizer_nit = torch.optim.LBFGS(model_nit.parameters(), lr=1.0, max_iter=20, history_size=50, line_search_fn='strong_wolfe')
+optimizer_nit = torch.optim.LBFGS(model_nit.parameters(), lr=1.0, max_iter=20, history_size=10, line_search_fn='strong_wolfe')
 
 model_nit, history = train.train_model(
     model_nit,
@@ -172,9 +173,9 @@ init = utils.create_intitial_guess(A_pod, H_pod, r=r)
 init["Phi"] = phi_pod.clone()
 init["Psi"] = psi_pod.clone()
 
-params_nit_gs = nit_model.NitromParams_GloballyStable(pool, r, poly_comp, init=init, requires_grad=True)
+params_nit_gs = nit_model.NitromParams_GloballyStable(pool, r, poly_comp, init=init, requires_grad=True).to(device)
 model_nit_gs = nit_model.NitromModel_GloballyStable(params_nit_gs, opt_obj, fom).to(device)
-optimizer_nit_gs = torch.optim.LBFGS(model_nit_gs.parameters(), lr=1.0, max_iter=20, history_size=50, line_search_fn='strong_wolfe')
+optimizer_nit_gs = torch.optim.LBFGS(model_nit_gs.parameters(), lr=1.0, max_iter=20, history_size=10, line_search_fn='strong_wolfe')
 
 model_nit_gs, history = train.train_model(
     model_nit_gs,

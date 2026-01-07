@@ -83,5 +83,3 @@ u = fields[0]
 v = fields[1]
 
 print(np.max(fields[idx]),np.min(fields[idx]))
-
-

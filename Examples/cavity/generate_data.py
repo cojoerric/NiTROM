@@ -167,9 +167,3 @@ fq = Phi@(Phi.T@(fom.evaluate_fom_fullrhs(vec) - fom.evaluate_fom_fullrhs(0*vec)
 diff = fq - rhs
 print(np.linalg.norm(diff))
 plt.show()
-
-
-
-
-    
-    

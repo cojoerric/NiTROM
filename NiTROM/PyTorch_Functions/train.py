@@ -146,12 +146,12 @@ def train_model(
                             _apply_qr_update(model.params.Phi, model.params.Psi, last_gphi, last_gpsi, lr)
             cost_val = last_loss
             grad_norm = last_grad_norm
-            print_out = f"Epoch [{epoch+1}/{num_epochs}], Loss: {float(cost_val.detach().item()):.6e}, Grad Norm: {grad_norm:.3e}"
+            print_out = f"Epoch [{epoch+1}/{num_epochs}], Loss: {float(cost_val.detach().item()):.4e}, Grad Norm: {grad_norm:.3e}"
         else:
             cost_val = _compute_and_set_grads()
             grad_norm = last_grad_norm
             lr = optimizer.param_groups[0]["lr"]
-            print_out = f"Epoch [{epoch+1}/{num_epochs}], Loss: {float(cost_val.detach().item()):.6e}, LR: {lr:.3e}, Grad Norm: {grad_norm:.3e}"
+            print_out = f"Epoch [{epoch+1}/{num_epochs}], Loss: {float(cost_val.detach().item()):.4e}, LR: {lr:.3e}, Grad Norm: {grad_norm:.3e}"
 
             optimizer.step()
 
