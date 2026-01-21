@@ -28,6 +28,7 @@ def train_model(
         and dist.is_initialized()
     )
     is_lbfgs = optimizer.__class__.__name__ == "LBFGS"
+    is_nitrom = model.name == 'nitrom'
 
     history = []
     for epoch in range(num_epochs):
@@ -89,7 +90,7 @@ def train_model(
             for p, g in zip(params.tensors(), grad_tensors):
                 p.grad = g if isinstance(g, torch.Tensor) else torch.tensor(g, device=p.device, dtype=p.dtype)
 
-            if model.name == 'nitrom':
+            if is_nitrom:
                 if manifold_retraction == "qr":
                     for p in (params.Phi, params.Psi):
                         p.grad = None
@@ -111,7 +112,7 @@ def train_model(
             if grad_clip is not None:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip)
 
-            if model.name == 'nitrom':
+            if is_nitrom:
                 if manifold_retraction == "qr":
                     phi = params.Phi
                     psi = params.Psi
@@ -141,7 +142,7 @@ def train_model(
                 if lr is None:
                     lr = optimizer.param_groups[0]["lr"]
                 with torch.no_grad():
-                    if model.name == 'nitrom':
+                    if is_nitrom:
                         if last_gphi is not None and last_gpsi is not None:
                             _apply_qr_update(model.params.Phi, model.params.Psi, last_gphi, last_gpsi, lr)
             cost_val = last_loss

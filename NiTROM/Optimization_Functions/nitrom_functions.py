@@ -21,7 +21,7 @@ def create_objective_and_gradient(*args, **kwargs):
     glob_stable = kwargs.get('glob_stable', False)
     poly_comp = kwargs.get('poly_comp', None)
     return_numpy = kwargs.get('return_numpy', False)
-    integrator = my_etdrk4
+    integrator = my_rk4_adaptive
     internal_steps = 5
 
 
@@ -37,7 +37,7 @@ def create_objective_and_gradient(*args, **kwargs):
         if glob_stable:
             tensors, _ = construct_operators(tensors_old, poly_comp)
         else:
-            tensors = tensors_old    
+            tensors = tensors_old
 
         PhiF = Phi@torch.linalg.inv(Psi.T@Phi)
 
