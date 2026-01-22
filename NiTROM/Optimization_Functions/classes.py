@@ -124,16 +124,22 @@ class optimization_objects:
             self.F = pool.F[:,local_which_trajs]
             self.weights = pool.weights[local_which_trajs]
         else:
-            self.X = torch.zeros((0,pool.N,len(which_times)), device=pool.device)
-            self.F = torch.zeros((pool.N,0), device=pool.device)
-            self.weights = torch.zeros((0,), device=pool.device)
+            self.X = torch.zeros((0,pool.N,len(which_times)), device=pool.device, dtype=pool.dtype)
+            self.F = torch.zeros((pool.N,0), device=pool.device, dtype=pool.dtype)
+            self.weights = torch.zeros((0,), device=pool.device, dtype=pool.dtype)
         
         self.time = pool.time[which_times]
         self.my_n_traj, _, self.n_snapshots = self.X.shape
-        self.leggauss_deg = leggauss_deg
         self.nsave_rom = nsave_rom
         self.poly_comp = poly_comp
         self.generate_einsum_subscripts()
+
+        # Gauss-Legendre quadrature points and weights
+        # Cubic spline interpolation to compute integral
+        self.leggauss_deg = leggauss_deg
+        tlg, wlg = np.polynomial.legendre.leggauss(self.leggauss_deg)
+        self.tlg = torch.tensor(tlg, device=pool.device, dtype=pool.dtype)
+        self.wlg = torch.tensor(wlg, device=pool.device, dtype=pool.dtype)
 
         # Count the total number of trajectories in this batch and
         # scale the weight accordingly so that the cost function measures

@@ -26,6 +26,7 @@ class Interp1D:
         x1 = torch.index_select(x, dim=-1, index=idx)
 
         m = (tq - t0) / (t1 - t0)                                          # (Q,)
+        m = m.to(x0.dtype)
         m = m.reshape(*([1] * (x0.ndim - 1)), -1)                          # (..., Q)
 
         xq = x0 + m * (x1 - x0)                                            # (..., Q)

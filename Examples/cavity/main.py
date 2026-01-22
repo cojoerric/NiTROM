@@ -2,9 +2,6 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 
-import time_steppers as tstep
-import post_process as pp
-
 from NiTROM.Optimization_Functions import classes, nitrom_models as nit_model, opinf_models as oi_model, opinf_closed_form as oi_cf, utils
 from NiTROM.PyTorch_Functions import gpu_utils, train
 import classes_cavity
@@ -22,7 +19,7 @@ torch.set_printoptions(precision=8)
 
 
 device, rank, world_size = gpu_utils.setup_distributed_gpus()
-dtype = torch.float64
+dtype = torch.float32
 if rank == 0:
     print(f"Using {world_size} GPU(s) for distributed training.")
     print(f"Device: {device}")
@@ -144,7 +141,9 @@ init = {
 }
 params_nit = nit_model.NitromParams(pool, r, poly_comp, init=init, requires_grad=True).to(device)
 model_nit = nit_model.NitromModel(params_nit, opt_obj, fom).to(device)
-optimizer_nit = torch.optim.LBFGS(model_nit.parameters(), lr=1.0, max_iter=20, history_size=10, line_search_fn='strong_wolfe')
+# optimizer_nit = torch.optim.LBFGS(model_nit.parameters(), lr=1.0, max_iter=20, history_size=10, line_search_fn='strong_wolfe')
+optimizer_nit = torch.optim.Adam(model_nit.parameters(), lr=1e-2)
+scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer_nit, mode='min', factor=0.5, patience=5)
 
 model_nit, history = train.train_model(
     model_nit,
@@ -153,6 +152,7 @@ model_nit, history = train.train_model(
     num_epochs=50,
     log_every=1,
     manifold_retraction="qr",
+    scheduler=scheduler,
 )
 
 phi_nit = model_nit.params.Phi.detach()
@@ -174,8 +174,10 @@ init["Phi"] = phi_pod.clone()
 init["Psi"] = psi_pod.clone()
 
 params_nit_gs = nit_model.NitromParams_GloballyStable(pool, r, poly_comp, init=init, requires_grad=True).to(device)
-model_nit_gs = nit_model.NitromModel_GloballyStable(params_nit_gs, opt_obj, fom).to(device)
-optimizer_nit_gs = torch.optim.LBFGS(model_nit_gs.parameters(), lr=1.0, max_iter=20, history_size=10, line_search_fn='strong_wolfe')
+model_nit_gs = nit_model.NitromModel(params_nit_gs, opt_obj, fom).to(device)
+# optimizer_nit_gs = torch.optim.LBFGS(model_nit_gs.parameters(), lr=1.0, max_iter=20, history_size=10, line_search_fn='strong_wolfe')
+optimizer_nit_gs = torch.optim.Adam(model_nit_gs.parameters(), lr=1e-2)
+scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer_nit_gs, mode='min', factor=0.5, patience=5)
 
 model_nit_gs, history = train.train_model(
     model_nit_gs,
@@ -184,6 +186,7 @@ model_nit_gs, history = train.train_model(
     num_epochs=50,
     log_every=1,
     manifold_retraction="qr",
+    scheduler=scheduler,
 )
 
 phi_nit_gs = model_nit_gs.params.Phi.detach()

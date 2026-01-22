@@ -29,7 +29,7 @@ def my_rk4(fun, t_vec, x0, args=()):
     """
 
     x = x0.clone()
-    dt = (t_vec[1] - t_vec[0]) / 10  # 0-dim tensor
+    dt = (t_vec[1] - t_vec[0]) / 10  # 0-dim tensor on-device
     Tlen = t_vec.shape[0]
 
     if x0.ndim == 1:
@@ -43,11 +43,27 @@ def my_rk4(fun, t_vec, x0, args=()):
         raise ValueError("x0 must be 1D (n,) or 2D (B, n).")
 
     t = t_vec[0].clone()
-    for i, T in enumerate(t_vec[1:], start=1):
-        while (t < T).item():
-            dt_trial = torch.minimum(dt, T - t)
+    for i in range(1, Tlen):
+        T = t_vec[i]
+
+        rem = T - t
+        if (rem <= 0).item():
+            # Nothing to do for this interval (or non-increasing t_vec)
+            if x0.ndim == 1:
+                xs[:, i] = x
+            else:
+                xs[:, :, i] = x
+            continue
+
+        # Compute number of fixed RK4 substeps for this output interval once.
+        # (One sync per output interval, not per substep.)
+        n_steps = int(torch.ceil(rem / dt).to(torch.int64).clamp(min=1).item())
+
+        for j in range(n_steps):
+            dt_trial = dt if j < (n_steps - 1) else (T - t)
             x = rk4_step(fun, t, x, dt_trial, args)
             t = t + dt_trial
+
         if x0.ndim == 1:
             xs[:, i] = x
         else:
@@ -92,31 +108,33 @@ def my_rk4_adaptive(
     else:
         raise ValueError("x0 must be 1D (n,) or 2D (B, n).")
 
+    # Pre-create scalars on the right device/dtype to avoid per-iteration allocations
+    one = torch.ones((), device=x0.device, dtype=x0.dtype)
+    exponent = 1.0 / 5.0
+    err_floor = torch.as_tensor(1e-12, device=x0.device, dtype=x0.dtype)
+
     t = t_vec[0]
-    for i, T in enumerate(t_vec[1:], start=1):
+    for i in range(1, Tlen):
+        T = t_vec[i]
         while (t < T).item():
             dt_trial = torch.minimum(dt, T - t)
 
             x_full = rk4_step(fun, t, x, dt_trial, args)
-            x_half1 = rk4_step(fun, t, x, dt_trial / 2, args)
-            x_half2 = rk4_step(fun, t + dt_trial / 2, x_half1, dt_trial / 2, args)
+            dt_half = dt_trial * 0.5
+            x_half1 = rk4_step(fun, t, x, dt_half, args)
+            x_half2 = rk4_step(fun, t + dt_half, x_half1, dt_half, args)
 
             dx = x_half2 - x_full
             scale = atol + rtol * torch.maximum(torch.abs(x_full), torch.abs(x_half2))
-            err_vec = torch.abs(dx) / scale
-
-            # Global error across all batch items and states
-            err = torch.amax(err_vec)
+            err = torch.amax(torch.abs(dx) / scale)  # scalar
 
             if (err <= 1.0).item():
                 t = t + dt_trial
                 x = x_half2
 
-            # Update dt (guard for err == 0)
-            exponent = 1.0 / 5.0
-            dt_growth = dt_trial * safety_factor * torch.where(
-                err > 0, (1.0 / err) ** exponent, torch.tensor(fac_max, device=dt_trial.device, dtype=dt_trial.dtype)
-            )
+            # Timestep controller (avoid err==0 branch + avoid new tensor allocations)
+            err_safe = torch.maximum(err, err_floor)
+            dt_growth = dt_trial * safety_factor * (one / err_safe) ** exponent
             dt = torch.clamp(dt_growth, min=dt * fac_min, max=dt * fac_max)
 
         if x0.ndim == 1:

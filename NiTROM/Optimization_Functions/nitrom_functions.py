@@ -3,7 +3,7 @@ import torch
 from string import ascii_lowercase as ascii
 
 import time as tlib
-from ..PyTorch_Functions.integrators import my_etdrk4, etdrk4_setup, my_rk4_adaptive
+from ..PyTorch_Functions.integrators import my_etdrk4, etdrk4_setup, my_rk4_adaptive, my_rk4
 from ..PyTorch_Functions.linear_interpolation import Interp1D
 from .utils import construct_operators, propagate_gradients
 
@@ -41,11 +41,12 @@ def create_objective_and_gradient(*args, **kwargs):
 
         PhiF = Phi@torch.linalg.inv(Psi.T@Phi)
 
-        D, V = torch.linalg.eig(tensors[0])
-        V_inv = torch.linalg.inv(V)
-        linop = V, D, V_inv
         dt = (opt_obj.time[1] - opt_obj.time[0])/internal_steps
-        etdrk4_coefs = etdrk4_setup(linop, dt)
+        if integrator == my_etdrk4:
+            D, V = torch.linalg.eig(tensors[0])
+            V_inv = torch.linalg.inv(V)
+            linop = V, D, V_inv
+            etdrk4_coefs = etdrk4_setup(linop, dt)
 
         J = 0.0
         B = opt_obj.my_n_traj
@@ -100,16 +101,17 @@ def create_objective_and_gradient(*args, **kwargs):
         else:
             tensors = tensors_old
 
-        D, V = torch.linalg.eig(tensors[0])
-        V_inv = torch.linalg.inv(V)
-        linop = V, D, V_inv
-        linop_T = V_inv.T, D, V.T
         dt = (opt_obj.time[1] - opt_obj.time[0])/internal_steps
-        dt2 = dt / (opt_obj.nsave_rom-1)
-        etdrk4_coefs = etdrk4_setup(linop, dt)
-        etdrk4_coefs_2 = etdrk4_setup(linop, dt2)
-        etdrk4_coefs_T2 = etdrk4_setup(linop_T, dt2)
         t_unit = torch.linspace(0.0, 1.0, steps=opt_obj.nsave_rom, device=pool.device, dtype=torch.float64)
+        if integrator == my_etdrk4:
+            D, V = torch.linalg.eig(tensors[0])
+            V_inv = torch.linalg.inv(V)
+            linop = V, D, V_inv
+            linop_T = V_inv.T, D, V.T
+            dt2 = dt / (opt_obj.nsave_rom-1)
+            etdrk4_coefs = etdrk4_setup(linop, dt)
+            etdrk4_coefs_2 = etdrk4_setup(linop, dt2)
+            etdrk4_coefs_T2 = etdrk4_setup(linop_T, dt2)
         
         B = opt_obj.my_n_traj
 
@@ -127,11 +129,9 @@ def create_objective_and_gradient(*args, **kwargs):
         # Biorthogonalize Phi and Psi
         F = torch.linalg.inv(Psi.T@Phi)
         PhiF = Phi@F
-        
-        # Gauss-Legendre quadrature points and weights
-        # Cubic spline interpolation to compute integral
-        tlg, wlg = np.polynomial.legendre.leggauss(opt_obj.leggauss_deg)
-        tlg = torch.from_numpy(tlg).to(pool.device); wlg = torch.from_numpy(wlg).to(pool.device)
+
+        tlg = opt_obj.tlg
+        wlg = opt_obj.wlg
 
         if B > 0:
 
