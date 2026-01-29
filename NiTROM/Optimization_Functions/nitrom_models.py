@@ -120,6 +120,7 @@ class NitromModel(nn.Module):
         params: nn.Module,
         opt_obj,
         fom,
+        integrator,
         *,
         return_numpy: bool = False,
     ):
@@ -136,7 +137,8 @@ class NitromModel(nn.Module):
             fom,
             glob_stable=self.glob_stable,
             poly_comp=params._poly_comp,
-            return_numpy=return_numpy
+            integrator=integrator,
+            return_numpy=return_numpy,
         )
 
     def forward(self):

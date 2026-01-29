@@ -130,26 +130,34 @@ for k in range(n_traj):
     z_pod = psi_pod.T @ pool.X[k,:,0]
     sol = phi_pod @ my_rk4_adaptive(opt_obj.evaluate_rom_rhs, pool.time, z_pod, args=(u,) + tensors_pod)
     e_pod += torch.linalg.norm(sol - pool.X[k,], dim=0)**2 / mean_en / n_traj
+    # e_pod = torch.linalg.norm(sol - pool.X[k,], dim=0)**2 / mean_en
+    # plt.plot(time, e_pod.cpu().numpy(), color=cPOD, linestyle=lPOD, alpha=0.3)
 
     # OpInf
     z_oi = psi_pod.T @ pool.X[k,:,0]
     sol = phi_pod @ my_rk4_adaptive(opt_obj.evaluate_rom_rhs, pool.time, z_oi, args=(u,) + tensors_oi)
     e_oi += torch.linalg.norm(sol - pool.X[k,], dim=0)**2 / mean_en / n_traj
+    # plt.plot(time, torch.linalg.norm(sol - pool.X[k,], dim=0)**2 / mean_en, color=cOI, linestyle=lOI, alpha=0.3)
 
     # OpInf GS
     z_oi_gs = psi_pod.T @ pool.X[k,:,0]
     sol = phi_pod @ my_rk4_adaptive(opt_obj.evaluate_rom_rhs, pool.time, z_oi_gs, args=(u,) + tensors_oi_gs)
     e_oi_gs += torch.linalg.norm(sol - pool.X[k,], dim=0)**2 / mean_en / n_traj
+    # e_oi_gs = torch.linalg.norm(sol - pool.X[k,], dim=0)**2 / mean_en
+    # plt.plot(time, e_oi_gs.cpu().numpy(), color=cOI_gs, linestyle=lOI_gs, alpha=0.3)
 
     # NiTROM
     z_nit = psi_nit.T @ pool.X[k,:,0]
     sol = phi_nit @ my_rk4_adaptive(opt_obj.evaluate_rom_rhs, pool.time, z_nit, args=(u,) + tensors_nit)
     e_nit += torch.linalg.norm(sol - pool.X[k,], dim=0)**2 / mean_en / n_traj
+    # plt.plot(time, torch.linalg.norm(sol - pool.X[k,], dim=0)**2 / mean_en, color=cNIT, linestyle=lNIT, alpha=0.3)
 
     # NiTROM GS
     z_nit_gs = psi_nit_gs.T @ pool.X[k,:,0]
     sol = phi_nit_gs @ my_rk4_adaptive(opt_obj.evaluate_rom_rhs, pool.time, z_nit_gs, args=(u,) + tensors_nit_gs)
     e_nit_gs += torch.linalg.norm(sol - pool.X[k,], dim=0)**2 / mean_en / n_traj
+    # e_nit_gs = torch.linalg.norm(sol - pool.X[k,], dim=0)**2 / mean_en
+    # plt.plot(time, e_nit_gs.cpu().numpy(), color=cNIT_gs, linestyle=lNIT_gs, alpha=0.3)
 
 
 plt.plot(time, e_pod.cpu().numpy(), label='POD', color=cPOD, linestyle=lPOD)
@@ -164,4 +172,4 @@ ax = plt.gca()
 ax.set_yscale('log')
 ax.set_ylim(bottom=1e-3)
 plt.tight_layout()
-plt.show()
+plt.savefig('errors')

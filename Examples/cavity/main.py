@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from NiTROM.Optimization_Functions import classes, nitrom_models as nit_model, opinf_models as oi_model, opinf_closed_form as oi_cf, utils
-from NiTROM.PyTorch_Functions import gpu_utils, train
+from NiTROM.PyTorch_Functions import gpu_utils, train, integrators
 import classes_cavity
 
 plt.rcParams['figure.dpi'] = 100
@@ -19,7 +19,14 @@ torch.set_printoptions(precision=8)
 
 
 device, rank, world_size = gpu_utils.setup_distributed_gpus()
-dtype = torch.float32
+dtype = torch.float64
+
+# Enable faster fp32 matmuls on Ampere+ (no effect on CPU)
+if device.type == "cuda":
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    torch.set_float32_matmul_precision("high")
+
 if rank == 0:
     print(f"Using {world_size} GPU(s) for distributed training.")
     print(f"Device: {device}")
@@ -34,6 +41,7 @@ dy = Ly/Ny
 Re = 8300
 
 flow = classes_cavity.flow_parameters(Lx,Ly,Nx,Ny,Re)
+integrator = integrators.my_etdrk4
 
 n = 400
 dt = 1.0/n
@@ -84,120 +92,127 @@ phi_pod = torch.tensor(phi_pod, device=device, dtype=dtype)
 psi_pod = torch.tensor(psi_pod, device=device, dtype=dtype)
 
 
+## Load previous run to use as IC
+print("\nLoading IC...")
+A_ic = torch.tensor(np.load('results/A_pod.npy'), device=device, dtype=dtype)
+H_ic = torch.tensor(np.load('results/H_pod.npy'), device=device, dtype=dtype)
+
 ## Compute POD model
-print("\nComputing POD Model...")
-tensors_pod, _ = fom.assemble_petrov_galerkin_tensors(phi_tot, psi_tot)
-np.save('results/A_pod.npy', tensors_pod[0])
-np.save('results/H_pod.npy', tensors_pod[1])
-tensors_pod = tuple([torch.tensor(tensor, device=device, dtype=dtype) for tensor in tensors_pod])
-A_pod, H_pod = tensors_pod
+# print("\nComputing POD Model...")
+# tensors_pod, _ = fom.assemble_petrov_galerkin_tensors(phi_tot, psi_tot)
+# np.save('results/A_pod.npy', tensors_pod[0])
+# np.save('results/H_pod.npy', tensors_pod[1])
+# tensors_pod = tuple([torch.tensor(tensor, device=device, dtype=dtype) for tensor in tensors_pod])
+# A_pod, H_pod = tensors_pod
 
 
 ## Compute OpInf model
-print("\nComputing OpInf Model...")
-tensors_oi = oi_cf.operator_inference(pool, phi_pod, poly_comp, lambdas=[0.0, 0.0])
-A_oi, H_oi = tensors_oi
+# print("\nComputing OpInf Model...")
+# tensors_oi = oi_cf.operator_inference(pool, phi_pod, poly_comp, lambdas=[0.0, 0.0])
+# A_oi, H_oi = tensors_oi
 
-np.save('results/A_oi.npy', A_oi.cpu().numpy())
-np.save('results/H_oi.npy', H_oi.cpu().numpy())
+# np.save('results/A_oi.npy', A_oi.cpu().numpy())
+# np.save('results/H_oi.npy', H_oi.cpu().numpy())
 
 
 ## Compute globally stable OpInf model
-print("\nTraining OpInf (GS) Model...")
-init = {
-    "A2": A_pod,
-    "A3": H_pod,
-}
-params_oi = oi_model.OpinfParams_GloballyStable(pool, r, poly_comp, init=init, requires_grad=True).to(device)
-model_oi = oi_model.OpinfModel(phi_pod, params_oi, opt_obj).to(device)
-optimizer_oi = torch.optim.LBFGS(model_oi.parameters(), lr=1.0, max_iter=20, history_size=10, line_search_fn='strong_wolfe')
+# print("\nTraining OpInf (GS) Model...")
+# init = {
+#     "A2": A_pod,
+#     "A3": H_pod,
+# }
+# params_oi = oi_model.OpinfParams_GloballyStable(pool, r, poly_comp, init=init, requires_grad=True).to(device)
+# model_oi = oi_model.OpinfModel(phi_pod, params_oi, opt_obj).to(device)
+# optimizer_oi = torch.optim.LBFGS(model_oi.parameters(), lr=1.0, max_iter=20, history_size=10, line_search_fn='strong_wolfe')
 
-model_oi, history = train.train_model(
-    model_oi,
-    pool,
-    optimizer_oi,
-    num_epochs=100,
-    log_every=25,
-)
+# model_oi, history = train.train_model(
+#     model_oi,
+#     pool,
+#     optimizer_oi,
+#     num_epochs=2500,
+#     log_every=100,
+# )
 
-Qhat = model_oi.params.Qhat.detach()
-Jhat = model_oi.params.Jhat.detach()
-Rhat = model_oi.params.Rhat.detach()
-Hhat = model_oi.params.Hhat.detach()
-A_oi_gs, H_oi_gs = utils.construct_operators((Qhat, Jhat, Rhat, Hhat), poly_comp)[0]
-tensors_oi_gs = (A_oi_gs, H_oi_gs)
+# Qhat = model_oi.params.Qhat.detach()
+# Jhat = model_oi.params.Jhat.detach()
+# Rhat = model_oi.params.Rhat.detach()
+# Hhat = model_oi.params.Hhat.detach()
+# A_oi_gs, H_oi_gs = utils.construct_operators((Qhat, Jhat, Rhat, Hhat), poly_comp)[0]
+# tensors_oi_gs = (A_oi_gs, H_oi_gs)
 
-np.save('results/A_oi_gs.npy', A_oi_gs.cpu().numpy())
-np.save('results/H_oi_gs.npy', H_oi_gs.cpu().numpy())
+# np.save('results/A_oi_gs.npy', A_oi_gs.cpu().numpy())
+# np.save('results/H_oi_gs.npy', H_oi_gs.cpu().numpy())
 
 
 ## Compute NiTROM model
-print("\nTraining NiTROM Model...")
-init = {
-    "Phi": phi_pod,
-    "Psi": psi_pod,
-    "A2": A_pod,
-    "A3": H_pod,
-}
-params_nit = nit_model.NitromParams(pool, r, poly_comp, init=init, requires_grad=True).to(device)
-model_nit = nit_model.NitromModel(params_nit, opt_obj, fom).to(device)
-# optimizer_nit = torch.optim.LBFGS(model_nit.parameters(), lr=1.0, max_iter=20, history_size=10, line_search_fn='strong_wolfe')
-optimizer_nit = torch.optim.Adam(model_nit.parameters(), lr=1e-2)
-scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer_nit, mode='min', factor=0.5, patience=5)
+# print("\nTraining NiTROM Model...")
+# init = {
+#     "Phi": phi_pod,
+#     "Psi": psi_pod,
+#     "A2": A_ic,
+#     "A3": H_ic,
+# }
+# params_nit = nit_model.NitromParams(pool, r, poly_comp, init=init, requires_grad=True).to(device)
+# model_nit = nit_model.NitromModel(params_nit, opt_obj, fom, integrator).to(device)
+# optimizer_nit = torch.optim.AdamW(model_nit.parameters(), lr=1e-2, weight_decay=1e-4)
+# scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer_nit, mode='min', factor=0.5, patience=5)
 
-model_nit, history = train.train_model(
-    model_nit,
-    pool,
-    optimizer_nit,
-    num_epochs=50,
-    log_every=1,
-    manifold_retraction="qr",
-    scheduler=scheduler,
-)
+# model_nit, history = train.train_model(
+#     model_nit,
+#     pool,
+#     optimizer_nit,
+#     num_epochs=5,
+#     log_every=1,
+#     manifold_retraction="qr",
+#     scheduler=scheduler,
+#     manifold_lr=1e-3,
+# )
 
-phi_nit = model_nit.params.Phi.detach()
-psi_nit = model_nit.params.Psi.detach()
-A_nit = model_nit.params.A2.detach()
-H_nit = model_nit.params.A3.detach()
-tensors_nit = (A_nit, H_nit)
+# phi_nit = model_nit.params.Phi.detach()
+# psi_nit = model_nit.params.Psi.detach()
+# A_nit = model_nit.params.A2.detach()
+# H_nit = model_nit.params.A3.detach()
+# tensors_nit = (A_nit, H_nit)
 
-np.save('results/phi_nit.npy', phi_nit.cpu().numpy())
-np.save('results/psi_nit.npy', psi_nit.cpu().numpy())
-np.save('results/A_nit.npy', A_nit.cpu().numpy())
-np.save('results/H_nit.npy', H_nit.cpu().numpy())
+# np.save('results/phi_nit.npy', phi_nit.cpu().numpy())
+# np.save('results/psi_nit.npy', psi_nit.cpu().numpy())
+# np.save('results/A_nit.npy', A_nit.cpu().numpy())
+# np.save('results/H_nit.npy', H_nit.cpu().numpy())
 
 
 ## Compute globally stable NiTROM model
 print("\nTraining NiTROM (GS) Model...")
-init = utils.create_intitial_guess(A_pod, H_pod, r=r)
+init = utils.create_intitial_guess(A_ic, H_ic, r=r)
 init["Phi"] = phi_pod.clone()
 init["Psi"] = psi_pod.clone()
 
 params_nit_gs = nit_model.NitromParams_GloballyStable(pool, r, poly_comp, init=init, requires_grad=True).to(device)
-model_nit_gs = nit_model.NitromModel(params_nit_gs, opt_obj, fom).to(device)
-# optimizer_nit_gs = torch.optim.LBFGS(model_nit_gs.parameters(), lr=1.0, max_iter=20, history_size=10, line_search_fn='strong_wolfe')
-optimizer_nit_gs = torch.optim.Adam(model_nit_gs.parameters(), lr=1e-2)
-scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer_nit_gs, mode='min', factor=0.5, patience=5)
+model_nit_gs = nit_model.NitromModel(params_nit_gs, opt_obj, fom, integrator).to(device)
+optimizer_nit_gs = torch.optim.AdamW(model_nit_gs.parameters(), lr=1e-2, weight_decay=1e-4)
+scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer_nit_gs, mode='min', factor=0.5, patience=20)
+
+def callback(epoch, loss, model):
+    phi = model.params.Phi.detach()
+    psi = model.params.Psi.detach()
+    Qhat = model.params.Qhat.detach()
+    Jhat = model.params.Jhat.detach()
+    Rhat = model.params.Rhat.detach()
+    Hhat = model.params.Hhat.detach()
+    A_nit_gs, H_nit_gs = utils.construct_operators((Qhat, Jhat, Rhat, Hhat), poly_comp)[0]
+
+    np.save('results/phi_nit_gs.npy', phi.cpu().numpy())
+    np.save('results/psi_nit_gs.npy', psi.cpu().numpy())
+    np.save('results/A_nit_gs.npy', A_nit_gs.cpu().numpy())
+    np.save('results/H_nit_gs.npy', H_nit_gs.cpu().numpy())
 
 model_nit_gs, history = train.train_model(
     model_nit_gs,
     pool,
     optimizer_nit_gs,
-    num_epochs=50,
-    log_every=1,
+    num_epochs=2000,
+    log_every=50,
     manifold_retraction="qr",
     scheduler=scheduler,
+    manifold_lr=1e-3,
+    callback=callback,
 )
-
-phi_nit_gs = model_nit_gs.params.Phi.detach()
-psi_nit_gs = model_nit_gs.params.Psi.detach()
-Qhat = model_nit_gs.params.Qhat.detach()
-Jhat = model_nit_gs.params.Jhat.detach()
-Rhat = model_nit_gs.params.Rhat.detach()
-Hhat = model_nit_gs.params.Hhat.detach()
-A_nit_gs, H_nit_gs = utils.construct_operators((Qhat, Jhat, Rhat, Hhat), poly_comp)[0]
-
-np.save('results/phi_nit_gs.npy', phi_nit_gs.cpu().numpy())
-np.save('results/psi_nit_gs.npy', psi_nit_gs.cpu().numpy())
-np.save('results/A_nit_gs.npy', A_nit_gs.cpu().numpy())
-np.save('results/H_nit_gs.npy', H_nit_gs.cpu().numpy())

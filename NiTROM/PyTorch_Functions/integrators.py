@@ -17,19 +17,25 @@ def rk4_step(fun, t, x, dt, args=()):
     return x_new
 
 
-def my_rk4(fun, t_vec, x0, args=()):
+def my_rk4(fun, t_vec, x0, args=(), *, n_substeps: int = 10):
     """
-    Integrates ODEs using RK4. PyTorch-compatible.
+    Integrates ODEs using fixed-step RK4 (fast, GPU-friendly).
 
     Supports:
       - x0: (n,) -> returns (n, T)
       - x0: (B, n) -> returns (B, n, T)
 
     fun(t, x, *args) must support batched x.
+
+    n_substeps:
+      Number of RK4 substeps per interval [t_vec[i-1], t_vec[i]].
+      (Keeps Python loop counts constant -> avoids torch->CPU sync from .item()).
     """
 
+    if n_substeps < 1:
+        raise ValueError("n_substeps must be >= 1")
+
     x = x0.clone()
-    dt = (t_vec[1] - t_vec[0]) / 10  # 0-dim tensor on-device
     Tlen = t_vec.shape[0]
 
     if x0.ndim == 1:
@@ -42,27 +48,23 @@ def my_rk4(fun, t_vec, x0, args=()):
     else:
         raise ValueError("x0 must be 1D (n,) or 2D (B, n).")
 
-    t = t_vec[0].clone()
+    t = t_vec[0]
     for i in range(1, Tlen):
         T = t_vec[i]
+        dt = (T - t) / n_substeps  # tensor scalar on-device
 
-        rem = T - t
-        if (rem <= 0).item():
-            # Nothing to do for this interval (or non-increasing t_vec)
+        # If t_vec is non-increasing, just record the current state.
+        if torch.any(dt <= 0):
             if x0.ndim == 1:
                 xs[:, i] = x
             else:
                 xs[:, :, i] = x
+            t = T
             continue
 
-        # Compute number of fixed RK4 substeps for this output interval once.
-        # (One sync per output interval, not per substep.)
-        n_steps = int(torch.ceil(rem / dt).to(torch.int64).clamp(min=1).item())
-
-        for j in range(n_steps):
-            dt_trial = dt if j < (n_steps - 1) else (T - t)
-            x = rk4_step(fun, t, x, dt_trial, args)
-            t = t + dt_trial
+        for _ in range(n_substeps):
+            x = rk4_step(fun, t, x, dt, args)
+            t = t + dt
 
         if x0.ndim == 1:
             xs[:, i] = x
@@ -82,7 +84,8 @@ def my_rk4_adaptive(
     rtol=1e-3,
     safety_factor=0.8,
     fac_min=0.1,
-    fac_max=5.0
+    fac_max=5.0,
+    n_substeps=1,
 ):
     """
     Adaptive RK4 with shared step across batch.
@@ -187,7 +190,8 @@ def my_etdrk4(etdrk4_coefs, fun_nonlinear, t_vec, x0, internal_steps=1, args=())
         and return the same shape.
     '''
 
-    dtype = torch.complex128
+    dtype_real = x0.dtype
+    dtype = torch.complex64 if dtype_real == torch.float32 else torch.complex128
     # Cast x0 and any tensor args to complex dtype
     x0 = x0.to(dtype)
     args = tuple(arg.to(dtype) if isinstance(arg, torch.Tensor) else arg for arg in args)
