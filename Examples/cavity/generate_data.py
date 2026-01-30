@@ -27,7 +27,7 @@ dx = Lx/Nx
 dy = Ly/Ny
 Re = 8300
 
-flow = classes.flow_parameters(Lx,Ly,Nx,Ny,Re)
+flow = classes.flow_class(Lx,Ly,Nx,Ny,Re)
 
 n = 400
 dt = 1.0/n
@@ -36,13 +36,14 @@ lops = classes.linear_operators_2D(flow,dt)
 flow.q_sbf = np.load("bflow_Re%d_Nx%d_Ny%d.npy"%(Re,Nx,Ny))
 fom = classes.fom_class(flow,lops)
 fom.assemble_forcing_profile(0.95, 0.05)
+B = fom.f.copy()
 
 
-X, Y, fields = pp.output_fields(flow,flow.q_sbf)
+X, Y, fields = pp.output_fields(flow,B)
 
 color_map = plt.cm.get_cmap('bwr')
 
-idx = 0
+idx = 1
 vmin = np.min(fields[idx]) 
 vmax = -vmin
 
@@ -62,7 +63,8 @@ nsave = 100
 time = dt*np.arange(0,n*40,1)
 tsave = time[::nsave]
 
-amps = [-1.5, -1.0, -0.25, -0.1, 0.1, 0.25, 1.0, 1.5]
+amps = [-1.0, -0.25, -0.05, 0.01, 0.05, 0.25, 1.0]
+bc_coefs = [0,0,1,0,0,0,0,0]
 
 Q = np.zeros((flow.szu + flow.szv,len(amps)*len(tsave)))
 energy = np.zeros((len(amps),len(tsave)))
@@ -71,8 +73,8 @@ for k in range (len(amps)):
     
     t0 = tlib.time()
     print("Generating trajectory %d/%d"%(k+1,len(amps)))
-    qic = flow.q_sbf + amps[k]*fom.f 
-    data, _ = tstep.nonlinear_solver_2D(flow,lops,qic,time,nsave)
+    qic = flow.q_sbf + amps[k]*B
+    data, _ = tstep.solver_2D(flow,lops,qic,time,nsave,bc_coefs)
     data -= flow.q_sbf.reshape(-1,1)
     
     Q[:,k*len(tsave):(k+1)*len(tsave)] = data 
@@ -113,7 +115,7 @@ for k in range (len(amps)):
     data = Q[:,k*len(tsave):(k+1)*len(tsave)]
     ddata = np.zeros_like(data)
     for j in range (data.shape[-1]):
-        ddata[:,j] = fom.evaluate_fom_dynamics(data[:,j])
+        ddata[:,j] = fom.evaluate_fom_dynamics(data[:,j],bc_coefs,[0,0,0,0,0,0,0,0])
         
     data = Phi_pre.T@data
     ddata = Phi_pre.T@ddata
@@ -125,7 +127,7 @@ for k in range (len(amps)):
     
 np.save(fname_time,tsave)
 np.save(traj_path + "amps.npy",amps)
-np.save(traj_path + "Phi_pre.npy",Phi_pre)
+np.save(traj_path + "phi_pre.npy",Phi_pre)
     
 
 X, Y, fields = pp.output_fields(flow,U[:,20])
@@ -144,14 +146,14 @@ plt.colorbar()
 
 r = 50
 Phi = U[:,:r]
-tensors_pod, _ = fom.assemble_petrov_galerkin_tensors(Phi, Phi)
+tensors_pod, _ = fom.assemble_petrov_galerkin_tensors(Phi, Phi, B, bc_coefs)
 
 vec = np.random.randn(flow.szu + flow.szv)
 vec /= np.linalg.norm(vec)
 vec = Phi@(Phi.T@vec)
 
 # Method 1
-rhs = Phi@(Phi.T@fom.evaluate_fom_dynamics(vec))
+rhs = Phi@(Phi.T@fom.evaluate_fom_dynamics(vec,bc_coefs,[0,0,0,0,0,0,0,0]))
 
 # Method 2
 z = Phi.T@vec 
@@ -162,7 +164,7 @@ print(np.linalg.norm(diff))
 
 # Method 3
 
-fq = Phi@(Phi.T@(fom.evaluate_fom_fullrhs(vec) - fom.evaluate_fom_fullrhs(0*vec)))
+fq = Phi@(Phi.T@(fom.evaluate_full_fom_dynamics(vec,bc_coefs) - fom.evaluate_full_fom_dynamics(0*vec,bc_coefs)))
 
 diff = fq - rhs
 print(np.linalg.norm(diff))

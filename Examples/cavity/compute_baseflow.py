@@ -33,7 +33,7 @@ dx = Lx/Nx
 dy = Ly/Ny
 Re = 8300
 
-flow = classes.flow_parameters(Lx,Ly,Nx,Ny,Re)
+flow = classes.flow_class(Lx,Ly,Nx,Ny,Re)
 
 n = 400
 dt = 1.0/n
@@ -42,10 +42,11 @@ lops = classes.linear_operators_2D(flow,dt)
 
 
 ## Compute baseflow
-nsave = 500
-time = dt*np.arange(0,n*400,1)
+nsave = 1000
+time = dt*np.arange(0,n*800,1)
 q0 = np.zeros(flow.szu+flow.szv)
-data, tsave = tstep.nonlinear_solver_2D(flow,lops,q0,time,nsave)
+bc_coefs = [0,0,1,0,0,0,0,0] # ul, ur, ub, ut, vl, vr, vb, vt
+data, tsave = tstep.solver_2D(flow,lops,q0,time,nsave,bc_coefs)
 
 idx0 = 0
 idx1 = data.shape[-1]
@@ -63,7 +64,7 @@ X, Y, fields = pp.output_fields(flow,data[:,-1].real)
 
 color_map = plt.cm.get_cmap('bwr')
 
-idx = 0
+idx = 1
 vmin = np.min(fields[idx]) 
 vmax = -vmin
 
