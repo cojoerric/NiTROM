@@ -23,7 +23,7 @@ def create_objective_and_gradient(*args, **kwargs):
     return_numpy = kwargs.get('return_numpy', False)
 
     integrator = kwargs.get("integrator", my_rk4)
-    rk4_substeps = int(kwargs.get("rk4_substeps", 10))
+    rk4_substeps = int(kwargs.get("rk4_substeps", 5))
     etdrk4_substeps = int(kwargs.get("etdrk4_substeps", 5))  # used by ETDRK4 branch
 
 

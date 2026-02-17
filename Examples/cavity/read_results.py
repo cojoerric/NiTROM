@@ -61,7 +61,7 @@ fname_deriv = traj_path + "deriv_%03d.npy"
 fname_time = traj_path + "time.npy"
 
 amps = np.load(traj_path + "amps.npy")
-phi_pre = np.load(traj_path + "Phi_pre.npy")
+phi_pre = np.load(traj_path + "phi_pre.npy")
 n_traj = len(amps)
 n = phi_pre.shape[-1]
 
@@ -96,15 +96,15 @@ A_oi = torch.tensor(np.load('results/A_oi.npy'), device=device, dtype=dtype)
 H_oi = torch.tensor(np.load('results/H_oi.npy'), device=device, dtype=dtype)
 tensors_oi = (A_oi, H_oi)
 
-# A_oi_gs = torch.tensor(np.load('results/A_oi_gs.npy'), device=device, dtype=dtype)
-# H_oi_gs = torch.tensor(np.load('results/H_oi_gs.npy'), device=device, dtype=dtype)
-# tensors_oi_gs = (A_oi_gs, H_oi_gs)
+A_oi_gs = torch.tensor(np.load('results/A_oi_gs.npy'), device=device, dtype=dtype)
+H_oi_gs = torch.tensor(np.load('results/H_oi_gs.npy'), device=device, dtype=dtype)
+tensors_oi_gs = (A_oi_gs, H_oi_gs)
 
-# phi_nit = torch.tensor(np.load('results/phi_nit.npy'), device=device, dtype=dtype)
-# psi_nit = torch.tensor(np.load('results/psi_nit.npy'), device=device, dtype=dtype)
-# A_nit = torch.tensor(np.load('results/A_nit.npy'), device=device, dtype=dtype)
-# H_nit = torch.tensor(np.load('results/H_nit.npy'), device=device, dtype=dtype)
-# tensors_nit = (A_nit, H_nit)
+phi_nit = torch.tensor(np.load('results/phi_nit.npy'), device=device, dtype=dtype)
+psi_nit = torch.tensor(np.load('results/psi_nit.npy'), device=device, dtype=dtype)
+A_nit = torch.tensor(np.load('results/A_nit.npy'), device=device, dtype=dtype)
+H_nit = torch.tensor(np.load('results/H_nit.npy'), device=device, dtype=dtype)
+tensors_nit = (A_nit, H_nit)
 
 # phi_nit_gs = torch.tensor(np.load('results/phi_nit_gs.npy'), device=device, dtype=dtype)
 # psi_nit_gs = torch.tensor(np.load('results/psi_nit_gs.npy'), device=device, dtype=dtype)
@@ -138,20 +138,21 @@ for k in range(n_traj):
     sol = phi_pod @ my_rk4_adaptive(opt_obj.evaluate_rom_rhs, pool.time, z_oi, args=(u,) + tensors_oi)
     # e_oi += torch.linalg.norm(sol - pool.X[k,], dim=0)**2 / mean_en / n_traj
     e_oi = torch.linalg.norm(sol - pool.X[k,], dim=0)**2 / mean_en
-    plt.plot(time, e_oi, color=cOI, linestyle=lOI, alpha=0.3)
+    plt.plot(time, e_oi.cpu().numpy(), color=cOI, linestyle=lOI, alpha=0.3)
 
     # OpInf GS
-    # z_oi_gs = psi_pod.T @ pool.X[k,:,0]
-    # sol = phi_pod @ my_rk4_adaptive(opt_obj.evaluate_rom_rhs, pool.time, z_oi_gs, args=(u,) + tensors_oi_gs)
+    z_oi_gs = psi_pod.T @ pool.X[k,:,0]
+    sol = phi_pod @ my_rk4_adaptive(opt_obj.evaluate_rom_rhs, pool.time, z_oi_gs, args=(u,) + tensors_oi_gs)
     # e_oi_gs += torch.linalg.norm(sol - pool.X[k,], dim=0)**2 / mean_en / n_traj
-    # # e_oi_gs = torch.linalg.norm(sol - pool.X[k,], dim=0)**2 / mean_en
-    # # plt.plot(time, e_oi_gs.cpu().numpy(), color=cOI_gs, linestyle=lOI_gs, alpha=0.3)
+    e_oi_gs = torch.linalg.norm(sol - pool.X[k,], dim=0)**2 / mean_en
+    plt.plot(time, e_oi_gs.cpu().numpy(), color=cOI_gs, linestyle=lOI_gs, alpha=0.3)
 
-    # # NiTROM
-    # z_nit = psi_nit.T @ pool.X[k,:,0]
-    # sol = phi_nit @ my_rk4_adaptive(opt_obj.evaluate_rom_rhs, pool.time, z_nit, args=(u,) + tensors_nit)
+    # NiTROM
+    z_nit = psi_nit.T @ pool.X[k,:,0]
+    sol = phi_nit @ my_rk4_adaptive(opt_obj.evaluate_rom_rhs, pool.time, z_nit, args=(u,) + tensors_nit)
     # e_nit += torch.linalg.norm(sol - pool.X[k,], dim=0)**2 / mean_en / n_traj
-    # # plt.plot(time, torch.linalg.norm(sol - pool.X[k,], dim=0)**2 / mean_en, color=cNIT, linestyle=lNIT, alpha=0.3)
+    e_nit = torch.linalg.norm(sol - pool.X[k,], dim=0)**2 / mean_en
+    plt.plot(time, e_nit.cpu().numpy(), color=cNIT, linestyle=lNIT, alpha=0.3)
 
     # # NiTROM GS
     # z_nit_gs = psi_nit_gs.T @ pool.X[k,:,0]

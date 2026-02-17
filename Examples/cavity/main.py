@@ -1,5 +1,5 @@
-import torch
 import numpy as np
+import torch
 import matplotlib.pyplot as plt
 
 from NiTROM.Optimization_Functions import classes, nitrom_models as nit_model, opinf_models as oi_model, opinf_closed_form as oi_cf, utils
@@ -48,7 +48,7 @@ dy = Ly/Ny
 Re = 8300
 
 flow = classes_cavity.flow_class(Lx,Ly,Nx,Ny,Re)
-integrator = integrators.my_rk4_adaptive
+integrator = integrators.my_rk4
 
 n = 400
 dt = 1.0/n
@@ -88,7 +88,7 @@ poly_comp = [1,2]   # Model with a linear part and a quadratic part
 which_trajs = torch.arange(0,pool.n_traj,1,device=device)
 which_times = torch.arange(0,pool.n_snapshots,1,device=device)
 leggauss_deg = 5
-nsave_rom = 2
+nsave_rom = 15
 
 opt_obj_inputs = (pool,which_trajs,which_times,leggauss_deg,nsave_rom,poly_comp)
 opt_obj = classes.optimization_objects(*opt_obj_inputs)
@@ -104,8 +104,16 @@ psi_pod = torch.tensor(psi_pod, device=device, dtype=dtype)
 ## Load previous run to use as IC
 if use_ic:
     print("\nLoading IC...")
-    A_ic = torch.tensor(np.load('results/A_pod.npy'), device=device, dtype=dtype)
-    H_ic = torch.tensor(np.load('results/H_pod.npy'), device=device, dtype=dtype)
+    # phi_ic = phi_pod.clone()
+    # psi_ic = psi_pod.clone()
+    phi_ic = torch.tensor(np.load('results/phi_nit_gs.npy'), device=device, dtype=dtype)
+    psi_ic = torch.tensor(np.load('results/psi_nit_gs.npy'), device=device, dtype=dtype)
+    # A_ic = torch.tensor(np.load('results/A_nit.npy'), device=device, dtype=dtype)
+    # H_ic = torch.tensor(np.load('results/H_nit.npy'), device=device, dtype=dtype)
+    Jhat_ic = torch.tensor(np.load('results/Jhat_nit_gs.npy'), device=device, dtype=dtype)
+    Qhat_ic = torch.tensor(np.load('results/Qhat_nit_gs.npy'), device=device, dtype=dtype)
+    Rhat_ic = torch.tensor(np.load('results/Rhat_nit_gs.npy'), device=device, dtype=dtype)
+    Hhat_ic = torch.tensor(np.load('results/Hhat_nit_gs.npy'), device=device, dtype=dtype)
 
 
 ## Compute POD model
@@ -190,45 +198,75 @@ if run_opinf_gs:
 if run_nitrom:
     print("\nTraining NiTROM Model...")
     init = {
-        "Phi": phi_pod,
-        "Psi": psi_pod,
+        "Phi": phi_ic,
+        "Psi": psi_ic,
         "A2": A_ic,
         "A3": H_ic,
     }
-    for factor in np.arange(1, 17):
-        print(f"\n  Training with factor {factor}...")
-        which_times = torch.arange(0, 10*factor, 1, device=device)
-        opt_obj_inputs = (pool,which_trajs,which_times,leggauss_deg,nsave_rom,poly_comp)
-        opt_obj = classes.optimization_objects(*opt_obj_inputs)
+    times = [3, 6, 8, 10, 12, 14, 15, 20, 25, 30, 35, 40, 42, 45, 47, 50, 55, 60, 65, 70, 75, 80, 90, 100, 120, 140, len(pool.time)-1]
+    times = times[-3:]
+    for i, factor in enumerate(times):
+        print(f"\n  Training with factor {factor}, number {i+1}/{len(times)}")
 
-        params_nit = nit_model.NitromParams(pool, r, poly_comp, init=init, requires_grad=True).to(device)
-        model_nit = nit_model.NitromModel(params_nit, opt_obj, fom, integrator).to(device)
-        optimizer_nit = torch.optim.AdamW(model_nit.parameters(), lr=1e-2, weight_decay=1e-4)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer_nit, mode='min', factor=0.5, patience=20, threshold=1e-4, min_lr=1e-6)
+        kouter = 30
+        for k in range(kouter):
+            if k % 2 == 0:
+                which_fix = 'fix_bases'
+                lr = 1e-5
+                weight_decay = 1e-5
+                manifold_lr = 0.0
+                num_epochs = 15
+            else:
+                which_fix = 'fix_tensors'
+                lr = 0.0
+                weight_decay = 0.0
+                manifold_lr = 5e-3
+                num_epochs = 10
+                
+            print(f"    Outer loop {k+1}/{kouter}, option {which_fix}...")
 
-        model_nit, history = train.train_model(
-            model_nit,
-            pool,
-            optimizer_nit,
-            num_epochs=200,
-            log_every=10,
-            manifold_retraction="qr",
-            scheduler=scheduler,
-            manifold_lr=1e-3,
-        )
+            A = init["A2"].clone()
+            evals = torch.linalg.eigvals(A)
+            max_real_part = torch.max(evals.real).item()
+            print(f"      Max real part of eigenvalues of A: {max_real_part:.4e}")
 
-        phi_nit = model_nit.params.Phi.detach()
-        psi_nit = model_nit.params.Psi.detach()
-        phi_nit = phi_nit @ torch.linalg.inv(psi_nit.T @ phi_nit)
-        A_nit = model_nit.params.A2.detach()
-        H_nit = model_nit.params.A3.detach()
+            which_times = torch.arange(0, factor, 1, device=device)
+            opt_obj_inputs = (pool,which_trajs,which_times,leggauss_deg,nsave_rom,poly_comp)
+            opt_obj_kwargs = {'which_fix': which_fix}
+            opt_obj = classes.optimization_objects(*opt_obj_inputs, **opt_obj_kwargs)
 
-        init = {
-            "Phi": phi_nit,
-            "Psi": psi_nit,
-            "A2": A_nit,
-            "A3": H_nit,
-        }
+            params_nit = nit_model.NitromParams(pool, r, poly_comp, init=init, requires_grad=True).to(device)
+            model_nit = nit_model.NitromModel(params_nit, opt_obj, fom, integrator).to(device)
+            # optimizer_nit = torch.optim.LBFGS(model_nit.parameters(), lr=1.0, max_iter=5, history_size=10, line_search_fn='strong_wolfe')
+            optimizer_nit = torch.optim.AdamW(model_nit.parameters(), lr=lr, weight_decay=weight_decay)
+
+            model_nit, history = train.train_model(
+                model_nit,
+                pool,
+                optimizer_nit,
+                num_epochs=num_epochs,
+                log_every=1,
+                manifold_retraction="qr",
+                manifold_lr=manifold_lr,
+                use_line_search=False,
+                safe_step=True,
+                ss_keep_lr=False,
+                ss_max_retries=20,
+                lbfgs_updates_manifold=False,
+            )
+
+            phi_nit = model_nit.params.Phi.detach()
+            psi_nit = model_nit.params.Psi.detach()
+            phi_nit = phi_nit @ torch.linalg.inv(psi_nit.T @ phi_nit)
+            A_nit = model_nit.params.A2.detach()
+            H_nit = model_nit.params.A3.detach()
+
+            init = {
+                "Phi": phi_nit,
+                "Psi": psi_nit,
+                "A2": A_nit,
+                "A3": H_nit,
+            }
 
         np.save('results/phi_nit.npy', phi_nit.cpu().numpy())
         np.save('results/psi_nit.npy', psi_nit.cpu().numpy())
@@ -244,51 +282,79 @@ if run_nitrom_gs:
         init["Phi"] = phi_nit.clone()
         init["Psi"] = psi_nit.clone()
     else:
-        init = utils.create_intitial_guess(A_ic, H_ic, r=r)
-        init["Phi"] = phi_pod.clone()
-        init["Psi"] = psi_pod.clone()
+        init = {"Phi": phi_ic, "Psi": psi_ic, "Qhat": Qhat_ic, "Jhat": Jhat_ic, "Rhat": Rhat_ic, "Hhat": Hhat_ic}
 
-    for factor in np.arange(1, 17):
-        print(f"\n  Training with factor {factor}...")
-        which_times = torch.arange(0, 10*factor, 1, device=device)
-        opt_obj_inputs = (pool,which_trajs,which_times,leggauss_deg,nsave_rom,poly_comp)
-        opt_obj = classes.optimization_objects(*opt_obj_inputs)
+    times = [3, 6, 8, 10, 12, 14, 15, 17, 20, 22, 25, 27, 30, 32, 35, 37, 40, 42, 45, 47, 50, 55, 60, 65, 70, 75, 80, 90, 100, 120, 140, len(pool.time)-1]
+    times = times[13:]
+    for i, factor in enumerate(times):
+        print(f"\n  Training with factor {factor}, number {i+1}/{len(times)}")
 
-        params_nit_gs = nit_model.NitromParams_GloballyStable(pool, r, poly_comp, init=init, requires_grad=True).to(device)
-        model_nit_gs = nit_model.NitromModel(params_nit_gs, opt_obj, fom, integrator).to(device)
-        optimizer_nit_gs = torch.optim.AdamW(model_nit_gs.parameters(), lr=1e-3, weight_decay=1e-4)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer_nit_gs, mode='min', factor=0.5, patience=20, threshold=1e-4, min_lr=1e-6)
-        # optimizer_nit_gs = torch.optim.LBFGS(model_nit_gs.parameters(), lr=1.0, max_iter=20, history_size=10)
+        kouter = 5
+        for k in range(kouter):
+            if k % 2 == 0:
+                which_fix = 'fix_bases'
+                lr = 1e-3
+                weight_decay = 1e-5
+                manifold_lr = 0.0
+                num_epochs = 15
+            else:
+                which_fix = 'fix_tensors'
+                lr = 0.0
+                weight_decay = 0.0
+                manifold_lr = 1e-2
+                num_epochs = 10
+                
+            print(f"    Outer loop {k+1}/{kouter}, option {which_fix}...")
 
-        model_nit_gs, history = train.train_model(
-            model_nit_gs,
-            pool,
-            optimizer_nit_gs,
-            num_epochs=200,
-            log_every=10,
-            manifold_retraction="qr",
-            scheduler=scheduler,
-            manifold_lr=1e-3,
-        )
+            which_times = torch.arange(0, factor, 1, device=device)
+            opt_obj_inputs = (pool,which_trajs,which_times,leggauss_deg,nsave_rom,poly_comp)
+            opt_obj_kwargs = {'which_fix': which_fix}
+            opt_obj = classes.optimization_objects(*opt_obj_inputs, **opt_obj_kwargs)
 
-        phi_nit_gs = model_nit_gs.params.Phi.detach()
-        psi_nit_gs = model_nit_gs.params.Psi.detach()
-        phi_nit_gs = phi_nit_gs @ torch.linalg.inv(psi_nit_gs.T @ phi_nit_gs)
-        Qhat = model_nit_gs.params.Qhat.detach()
-        Jhat = model_nit_gs.params.Jhat.detach()
-        Rhat = model_nit_gs.params.Rhat.detach()
-        Hhat = model_nit_gs.params.Hhat.detach()
-        A_nit_gs, H_nit_gs = utils.construct_operators((Qhat, Jhat, Rhat, Hhat), poly_comp)[0]
+            params_nit_gs = nit_model.NitromParams_GloballyStable(pool, r, poly_comp, init=init, requires_grad=True).to(device)
+            model_nit_gs = nit_model.NitromModel(params_nit_gs, opt_obj, fom, integrator).to(device)
+            optimizer_nit_gs = torch.optim.LBFGS(model_nit_gs.parameters(), lr=1.0, max_iter=5, history_size=10, line_search_fn='strong_wolfe')
+            # optimizer_nit_gs = torch.optim.AdamW(model_nit_gs.parameters(), lr=lr, weight_decay=weight_decay)
 
-        init = {
-            "Phi": phi_nit_gs,
-            "Psi": psi_nit_gs,
-            "Qhat": Qhat,
-            "Jhat": Jhat,
-            "Rhat": Rhat,
-            "Hhat": Hhat,
-        }
-        np.save('results/phi_nit_gs.npy', phi_nit_gs.cpu().numpy())
-        np.save('results/psi_nit_gs.npy', psi_nit_gs.cpu().numpy())
-        np.save('results/A_nit_gs.npy', A_nit_gs.cpu().numpy())
-        np.save('results/H_nit_gs.npy', H_nit_gs.cpu().numpy())
+            model_nit_gs, history = train.train_model(
+                model_nit_gs,
+                pool,
+                optimizer_nit_gs,
+                num_epochs=num_epochs,
+                log_every=1,
+                manifold_retraction="qr",
+                manifold_lr=manifold_lr,
+                use_line_search=False,
+                safe_step=False,
+                ss_keep_lr=False,
+                ss_max_retries=20,
+                lbfgs_updates_manifold=True,
+                vector_transport=True,
+            )
+
+            phi_nit_gs = model_nit_gs.params.Phi.detach()
+            psi_nit_gs = model_nit_gs.params.Psi.detach()
+            phi_nit_gs = phi_nit_gs @ torch.linalg.inv(psi_nit_gs.T @ phi_nit_gs)
+            Qhat = model_nit_gs.params.Qhat.detach()
+            Jhat = model_nit_gs.params.Jhat.detach()
+            Rhat = model_nit_gs.params.Rhat.detach()
+            Hhat = model_nit_gs.params.Hhat.detach()
+            A_nit_gs, H_nit_gs = utils.construct_operators((Qhat, Jhat, Rhat, Hhat), poly_comp)[0]
+
+            init = {
+                "Phi": phi_nit_gs,
+                "Psi": psi_nit_gs,
+                "Qhat": Qhat,
+                "Jhat": Jhat,
+                "Rhat": Rhat,
+                "Hhat": Hhat,
+            }
+
+            np.save('results/phi_nit_gs.npy', phi_nit_gs.cpu().numpy())
+            np.save('results/psi_nit_gs.npy', psi_nit_gs.cpu().numpy())
+            np.save('results/A_nit_gs.npy', A_nit_gs.cpu().numpy())
+            np.save('results/H_nit_gs.npy', H_nit_gs.cpu().numpy())
+            np.save('results/Qhat_nit_gs.npy', Qhat.cpu().numpy())
+            np.save('results/Jhat_nit_gs.npy', Jhat.cpu().numpy())
+            np.save('results/Rhat_nit_gs.npy', Rhat.cpu().numpy())
+            np.save('results/Hhat_nit_gs.npy', Hhat.cpu().numpy())
