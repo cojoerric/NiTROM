@@ -51,7 +51,7 @@ def create_objective_and_gradient(*args, **kwargs):
             linop = V, D, V_inv
             etdrk4_coefs = etdrk4_setup(linop, dt)
 
-        J = 0.0
+        J = torch.zeros((), device=pool.device, dtype=Phi.dtype)
         B = opt_obj.my_n_traj
         if B > 0:
             X0 = opt_obj.X[:, :, 0]          # (B, N)
@@ -89,10 +89,10 @@ def create_objective_and_gradient(*args, **kwargs):
                 Z = integrator(etdrk4_coefs,lambda t,z: 0*z,time_pen,opt_obj.randic)
             else:
                 Z = integrator(opt_obj.evaluate_rom_rhs, opt_obj.time, z0, args=(u_batch,)+tensors)
-            J += opt_obj.l2_pen*torch.dot(Z[:,-1],Z[:,-1])
+            J = J + opt_obj.l2_pen*torch.dot(Z[:,-1],Z[:,-1])
 
         if return_numpy:
-            return J.cpu().numpy()
+            return J.detach().cpu().numpy()
         
         return J
     

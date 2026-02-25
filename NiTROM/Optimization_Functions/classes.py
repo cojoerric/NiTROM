@@ -28,6 +28,8 @@ class pool:
         self.world_size = world_size
 
         self.n_traj = n_traj
+        if n_traj <= 0:
+            raise ValueError("n_traj must be a positive integer")
         self.is_distributed = (self.world_size > 1)
 
         # Distribute trajectories across GPUs
@@ -47,12 +49,33 @@ class pool:
         
         
     def load_trajectories(self,fname_traj):
-        
         self.fnames_traj = [fname_traj%k for k in self.traj_indices]
-        X = [np.load(self.fnames_traj[k]) for k in range(len(self.fnames_traj))]
-        self.N, self.n_snapshots = X[0].shape
-        X2 = np.zeros((self.my_n_traj,self.N,self.n_snapshots))
-        for k in range (self.my_n_traj): X2[k,] = X[k]
+
+        local_shape = None
+        if self.my_n_traj > 0:
+            X = [np.load(self.fnames_traj[k]) for k in range(len(self.fnames_traj))]
+            self.N, self.n_snapshots = X[0].shape
+            local_shape = (self.N, self.n_snapshots)
+            X2 = np.zeros((self.my_n_traj,self.N,self.n_snapshots), dtype=X[0].dtype)
+            for k in range (self.my_n_traj): X2[k,] = X[k]
+        else:
+            X2 = None
+
+        if self.is_distributed and dist.is_available() and dist.is_initialized():
+            gathered_shapes = [None for _ in range(self.world_size)]
+            dist.all_gather_object(gathered_shapes, local_shape)
+            shape = next((s for s in gathered_shapes if s is not None), None)
+            if shape is None:
+                raise RuntimeError("Could not infer trajectory shape across ranks.")
+            self.N, self.n_snapshots = shape
+        
+        if local_shape is None and not (self.is_distributed and dist.is_initialized()):
+            probe = np.load(fname_traj % 0, mmap_mode='r')
+            self.N, self.n_snapshots = probe.shape
+
+        if X2 is None:
+            X2 = np.zeros((0, self.N, self.n_snapshots), dtype=np.float64)
+        
         self.X = torch.tensor(X2, device=self.device, dtype=self.dtype)
 
     def load_weights(self,kwargs):
@@ -77,12 +100,18 @@ class pool:
     def load_time_derivatives(self,kwargs):
         
         fname_deriv = kwargs.get('fname_derivs',None)
-        if fname_deriv != None:
+        if fname_deriv is not None:
             self.fnames_deriv = [fname_deriv%k for k in self.traj_indices]
-            dX = [np.load(self.fnames_deriv[k]) for k in range(len(self.fnames_deriv))]
-            dX2 = np.zeros((self.my_n_traj,self.N,self.n_snapshots))
-            for k in range (self.my_n_traj): dX2[k,] = dX[k]
+            if self.my_n_traj > 0:
+                dX = [np.load(self.fnames_deriv[k]) for k in range(len(self.fnames_deriv))]
+                dX2 = np.zeros((self.my_n_traj,self.N,self.n_snapshots))
+                for k in range (self.my_n_traj): dX2[k,] = dX[k]
+            else:
+                dX2 = np.zeros((0,self.N,self.n_snapshots), dtype=np.float64)
+
             self.dX = torch.tensor(dX2, device=self.device, dtype=self.dtype)
+        else:
+            self.dX = torch.zeros((self.my_n_traj, self.N, self.n_snapshots), device=self.device, dtype=self.dtype)
 
 class optimization_objects:
 
@@ -125,6 +154,7 @@ class optimization_objects:
             self.weights = pool.weights[local_which_trajs]
         else:
             self.X = torch.zeros((0,pool.N,len(which_times)), device=pool.device, dtype=pool.dtype)
+            self.dX = torch.zeros((0,pool.N,len(which_times)), device=pool.device, dtype=pool.dtype)
             self.F = torch.zeros((pool.N,0), device=pool.device, dtype=pool.dtype)
             self.weights = torch.zeros((0,), device=pool.device, dtype=pool.dtype)
         

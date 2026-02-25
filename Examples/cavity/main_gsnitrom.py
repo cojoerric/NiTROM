@@ -36,8 +36,8 @@ use_ic = 1
 run_pod = 0
 run_opinf = 0
 run_opinf_gs = 0
-run_nitrom = 1
-run_nitrom_gs = 0
+run_nitrom = 0
+run_nitrom_gs = 1
 
 Lx = 1
 Ly = 1
@@ -108,14 +108,16 @@ if use_ic:
         print("\nLoading IC...")
     # phi_ic = phi_pod.clone()
     # psi_ic = psi_pod.clone()
-    phi_ic = torch.tensor(np.load('results/phi_nit.npy'), device=device, dtype=dtype)
-    psi_ic = torch.tensor(np.load('results/psi_nit.npy'), device=device, dtype=dtype)
-    A_ic = torch.tensor(np.load('results/A_nit.npy'), device=device, dtype=dtype)
-    H_ic = torch.tensor(np.load('results/H_nit.npy'), device=device, dtype=dtype)
-    # Jhat_ic = torch.tensor(np.load('results/Jhat_oi_gs.npy'), device=device, dtype=dtype)
-    # Qhat_ic = torch.tensor(np.load('results/Qhat_oi_gs.npy'), device=device, dtype=dtype)
-    # Rhat_ic = torch.tensor(np.load('results/Rhat_oi_gs.npy'), device=device, dtype=dtype)
-    # Hhat_ic = torch.tensor(np.load('results/Hhat_oi_gs.npy'), device=device, dtype=dtype)
+    # phi_ic = torch.tensor(np.load('results/phi_nit.npy'), device=device, dtype=dtype)
+    # psi_ic = torch.tensor(np.load('results/psi_nit.npy'), device=device, dtype=dtype)
+    # A_ic = torch.tensor(np.load('results/A_nit.npy'), device=device, dtype=dtype)
+    # H_ic = torch.tensor(np.load('results/H_nit.npy'), device=device, dtype=dtype)
+    phi_ic = torch.tensor(np.load('results/phi_nit_gs.npy'), device=device, dtype=dtype)
+    psi_ic = torch.tensor(np.load('results/psi_nit_gs.npy'), device=device, dtype=dtype)
+    Jhat_ic = torch.tensor(np.load('results/Jhat_nit_gs.npy'), device=device, dtype=dtype)
+    Qhat_ic = torch.tensor(np.load('results/Qhat_nit_gs.npy'), device=device, dtype=dtype)
+    Rhat_ic = torch.tensor(np.load('results/Rhat_nit_gs.npy'), device=device, dtype=dtype)
+    Hhat_ic = torch.tensor(np.load('results/Hhat_nit_gs.npy'), device=device, dtype=dtype)
 
 
 ## Compute POD model
@@ -176,22 +178,71 @@ if run_opinf:
 if run_opinf_gs:
     print("\nTraining OpInf (GS) Model...")
     init = utils.create_intitial_guess(A_ic, H_ic, r=r)
-    params_oi = oi_model.OpinfParams_GloballyStable(pool, r, poly_comp, init=init, requires_grad=True).to(device)
-    model_oi = oi_model.OpinfModel(phi_pod, params_oi, opt_obj).to(device)
-    optimizer_oi = torch.optim.LBFGS(model_oi.parameters(), lr=1.0, max_iter=20, history_size=10, line_search_fn='strong_wolfe')
 
-    model_oi, history = train.train_model(
-        model_oi,
+    weights = pool.weights.clone()
+    pool.weights *= pool.n_traj*pool.n_snapshots
+
+    lam = np.logspace(-4,-1,num=30)
+    cost_oi_gs = []
+    for count, l in enumerate(lam):
+        params_oi_gs = oi_model.OpinfParams_GloballyStable(pool, r, poly_comp, init=init, requires_grad=True).to(device)
+        model_oi_gs = oi_model.OpinfModel(phi_pod, params_oi_gs, opt_obj, regularization_H=l).to(device)
+        optimizer_oi_gs = torch.optim.LBFGS(model_oi_gs.parameters(), lr=1.0, max_iter=20, history_size=10, line_search_fn='strong_wolfe')
+        if count == 0:
+            num_epochs = 2500
+        else:
+            num_epochs = 500
+
+        model_oi_gs, history = train.train_model(
+            model_oi_gs,
+            pool,
+            optimizer_oi_gs,
+            num_epochs=num_epochs,
+            log_every=100,
+        )
+
+        Qhat = model_oi_gs.params.Qhat.detach()
+        Jhat = model_oi_gs.params.Jhat.detach()
+        Rhat = model_oi_gs.params.Rhat.detach()
+        Hhat = model_oi_gs.params.Hhat.detach()
+        init = {
+            "Phi": phi_pod,
+            "Psi": psi_pod,
+            "Qhat": Qhat,
+            "Jhat": Jhat,
+            "Rhat": Rhat,
+            "Hhat": Hhat,
+        }
+        params_oi_gs = nit_model.NitromParams_GloballyStable(pool, r, poly_comp, init=init, requires_grad=True).to(device)
+        model_oi_gs = nit_model.NitromModel(params_oi_gs, opt_obj, fom, integrator).to(device)
+        cost_oi_gs.append(model_oi_gs().item())
+        print(f"  Lambda {count+1}/{len(lam)}: {l:.4e}, Cost: {cost_oi_gs[-1]:.6e}")
+
+    pool.weights = weights
+
+    lambdas = [0.0,lam[np.argmin(cost_oi_gs)]]
+    print(lambdas, np.min(cost_oi_gs))
+
+    weights = pool.weights.clone()
+    pool.weights *= pool.n_traj*pool.n_snapshots
+
+    params_oi_gs = oi_model.OpinfParams_GloballyStable(pool, r, poly_comp, init=init, requires_grad=True).to(device)
+    model_oi_gs = oi_model.OpinfModel(phi_pod, params_oi_gs, opt_obj, regularization_H=lambdas[1]).to(device)
+    optimizer_oi_gs = torch.optim.LBFGS(model_oi_gs.parameters(), lr=1.0, max_iter=20, history_size=10, line_search_fn='strong_wolfe')
+    model_oi_gs, history = train.train_model(
+        model_oi_gs,
         pool,
-        optimizer_oi,
+        optimizer_oi_gs,
         num_epochs=2500,
         log_every=100,
     )
 
-    Qhat = model_oi.params.Qhat.detach()
-    Jhat = model_oi.params.Jhat.detach()
-    Rhat = model_oi.params.Rhat.detach()
-    Hhat = model_oi.params.Hhat.detach()
+    pool.weights = weights
+
+    Qhat = model_oi_gs.params.Qhat.detach()
+    Jhat = model_oi_gs.params.Jhat.detach()
+    Rhat = model_oi_gs.params.Rhat.detach()
+    Hhat = model_oi_gs.params.Hhat.detach()
     A_oi_gs, H_oi_gs = utils.construct_operators((Qhat, Jhat, Rhat, Hhat), poly_comp)[0]
 
     np.save('results/Qhat_oi_gs.npy', Qhat.cpu().numpy())
@@ -214,16 +265,16 @@ if run_nitrom:
         "A3": H_ic,
     }
     times = [5, 10, 12, 15, 17, 20, 22, 25, 27, 30, 35, 40, 50, 60, 70, 80]
-    times = times[-6:]
+    times = times[8:]
     for i, factor in enumerate(times):
         if rank == 0:
             print(f"\n  Training with factor {factor}, number {i+1}/{len(times)}")
 
-        kouter = 50
+        kouter = 17
         for k in range(kouter):
             if k % 2 == 0:
                 which_fix = 'fix_bases'
-                lr = 1e-4
+                lr = 1.0
                 weight_decay = 1e-5
                 manifold_lr = 0.0
                 num_epochs = 15
@@ -231,7 +282,7 @@ if run_nitrom:
                 which_fix = 'fix_tensors'
                 lr = 0.0
                 weight_decay = 0.0
-                manifold_lr = 5e-3
+                manifold_lr = 1.0
                 num_epochs = 10
             
             if rank == 0:
@@ -250,8 +301,9 @@ if run_nitrom:
 
             params_nit = nit_model.NitromParams(pool, r, poly_comp, init=init, requires_grad=True).to(device)
             model_nit = nit_model.NitromModel(params_nit, opt_obj, fom, integrator).to(device)
-            # optimizer_nit = torch.optim.LBFGS(model_nit.parameters(), lr=1.0, max_iter=5, history_size=10, line_search_fn='strong_wolfe')
-            optimizer_nit = torch.optim.AdamW(model_nit.parameters(), lr=lr, weight_decay=weight_decay)
+            optimizer_nit = torch.optim.LBFGS(model_nit.parameters(), lr=1.0, max_iter=5, history_size=10, line_search_fn='strong_wolfe')
+            # optimizer_nit = torch.optim.AdamW(model_nit.parameters(), lr=lr, weight_decay=weight_decay)
+            # optimizer_nit = torch.optim.SGD(model_nit.parameters(), lr=lr)
 
             model_nit, history = train.train_model(
                 model_nit,
@@ -262,10 +314,10 @@ if run_nitrom:
                 manifold_retraction="qr",
                 manifold_lr=manifold_lr,
                 use_line_search=False,
-                safe_step=True,
+                safe_step=False,
                 ss_keep_lr=False,
                 ss_max_retries=20,
-                lbfgs_updates_manifold=False,
+                lbfgs_updates_manifold=True,
                 vector_transport=True,
             )
 
@@ -291,24 +343,21 @@ if run_nitrom:
 
 ## Compute globally stable NiTROM model
 if run_nitrom_gs:
-    print("\nTraining NiTROM (GS) Model...")
-    if run_nitrom:
-        init = utils.create_intitial_guess(A_nit, H_nit, r=r)
-        init["Phi"] = phi_nit.clone()
-        init["Psi"] = psi_nit.clone()
-    else:
-        init = {"Phi": phi_ic, "Psi": psi_ic, "Qhat": Qhat_ic, "Jhat": Jhat_ic, "Rhat": Rhat_ic, "Hhat": Hhat_ic}
+    if rank == 0:
+        print("\nTraining NiTROM (GS) Model...")
+    init = {"Phi": phi_ic, "Psi": psi_ic, "Qhat": Qhat_ic, "Jhat": Jhat_ic, "Rhat": Rhat_ic, "Hhat": Hhat_ic}
 
-    times = [3, 6, 8, 10, 12, 14, 15, 17, 20, 22, 25, 27, 30, 32, 35, 37, 40, 42, 45, 47, 50, 55, 60, 65, 70, 75, 80, 90, 100, 120, 140, len(pool.time)-1]
-    times = times[13:]
+    times = [5, 10, 12, 15, 17, 20, 22, 25, 27, 30, 35, 40, 50, 60, 70, 80]
+    times = times[-2:]
     for i, factor in enumerate(times):
-        print(f"\n  Training with factor {factor}, number {i+1}/{len(times)}")
+        if rank == 0:
+            print(f"\n  Training with factor {factor}, number {i+1}/{len(times)}")
 
-        kouter = 5
+        kouter = 40
         for k in range(kouter):
             if k % 2 == 0:
                 which_fix = 'fix_bases'
-                lr = 1e-3
+                lr = 1e-4
                 weight_decay = 1e-5
                 manifold_lr = 0.0
                 num_epochs = 15
@@ -316,10 +365,11 @@ if run_nitrom_gs:
                 which_fix = 'fix_tensors'
                 lr = 0.0
                 weight_decay = 0.0
-                manifold_lr = 1e-2
+                manifold_lr = 5e-3
                 num_epochs = 10
                 
-            print(f"    Outer loop {k+1}/{kouter}, option {which_fix}...")
+            if rank == 0:
+                print(f"    Outer loop {k+1}/{kouter}, option {which_fix}...")
 
             which_times = torch.arange(0, factor, 1, device=device)
             opt_obj_inputs = (pool,which_trajs,which_times,leggauss_deg,nsave_rom,poly_comp)
@@ -328,8 +378,8 @@ if run_nitrom_gs:
 
             params_nit_gs = nit_model.NitromParams_GloballyStable(pool, r, poly_comp, init=init, requires_grad=True).to(device)
             model_nit_gs = nit_model.NitromModel(params_nit_gs, opt_obj, fom, integrator).to(device)
-            optimizer_nit_gs = torch.optim.LBFGS(model_nit_gs.parameters(), lr=1.0, max_iter=5, history_size=10, line_search_fn='strong_wolfe')
-            # optimizer_nit_gs = torch.optim.AdamW(model_nit_gs.parameters(), lr=lr, weight_decay=weight_decay)
+            # optimizer_nit_gs = torch.optim.LBFGS(model_nit_gs.parameters(), lr=1.0, max_iter=5, history_size=10, line_search_fn='strong_wolfe')
+            optimizer_nit_gs = torch.optim.AdamW(model_nit_gs.parameters(), lr=lr, weight_decay=weight_decay)
 
             model_nit_gs, history = train.train_model(
                 model_nit_gs,
@@ -340,10 +390,10 @@ if run_nitrom_gs:
                 manifold_retraction="qr",
                 manifold_lr=manifold_lr,
                 use_line_search=False,
-                safe_step=False,
+                safe_step=True,
                 ss_keep_lr=False,
                 ss_max_retries=20,
-                lbfgs_updates_manifold=True,
+                lbfgs_updates_manifold=False,
                 vector_transport=True,
             )
 
@@ -365,6 +415,7 @@ if run_nitrom_gs:
                 "Hhat": Hhat,
             }
 
+        if rank == 0:
             np.save('results/phi_nit_gs.npy', phi_nit_gs.cpu().numpy())
             np.save('results/psi_nit_gs.npy', psi_nit_gs.cpu().numpy())
             np.save('results/A_nit_gs.npy', A_nit_gs.cpu().numpy())

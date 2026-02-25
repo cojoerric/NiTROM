@@ -22,8 +22,8 @@ plt.rcParams['lines.linewidth'] = 2
 torch.set_printoptions(precision=8)
 
 
-cPOD, cOI, cOI_gs, cNIT, cNIT_gs = '#66c2a5', '#fc8d62', '#8da0cb', '#fc8d62','#8da0cb'
-lPOD, lOI, lOI_gs, lNIT, lNIT_gs = 'solid', 'dotted', 'dotted', 'dashed', 'dashed'
+cPOD, cOI, cOI_gs, cNIT, cNIT_gs = '#66c2a5', '#fc8d62', '#fc8d62', '#8da0cb','#8da0cb'
+lPOD, lOI, lOI_gs, lNIT, lNIT_gs = 'dotted', 'dashed', 'solid', 'dashed', 'solid'
 
 device, rank, world_size = gpu_utils.setup_distributed_gpus()
 dtype = torch.float64
@@ -106,11 +106,11 @@ A_nit = torch.tensor(np.load('results/A_nit.npy'), device=device, dtype=dtype)
 H_nit = torch.tensor(np.load('results/H_nit.npy'), device=device, dtype=dtype)
 tensors_nit = (A_nit, H_nit)
 
-# phi_nit_gs = torch.tensor(np.load('results/phi_nit_gs.npy'), device=device, dtype=dtype)
-# psi_nit_gs = torch.tensor(np.load('results/psi_nit_gs.npy'), device=device, dtype=dtype)
-# A_nit_gs = torch.tensor(np.load('results/A_nit_gs.npy'), device=device, dtype=dtype)
-# H_nit_gs = torch.tensor(np.load('results/H_nit_gs.npy'), device=device, dtype=dtype)
-# tensors_nit_gs = (A_nit_gs, H_nit_gs)
+phi_nit_gs = torch.tensor(np.load('results/phi_nit_gs.npy'), device=device, dtype=dtype)
+psi_nit_gs = torch.tensor(np.load('results/psi_nit_gs.npy'), device=device, dtype=dtype)
+A_nit_gs = torch.tensor(np.load('results/A_nit_gs.npy'), device=device, dtype=dtype)
+H_nit_gs = torch.tensor(np.load('results/H_nit_gs.npy'), device=device, dtype=dtype)
+tensors_nit_gs = (A_nit_gs, H_nit_gs)
 
 
 ## Plot results
@@ -131,42 +131,57 @@ for k in range(n_traj):
     sol = phi_pod @ my_rk4_adaptive(opt_obj.evaluate_rom_rhs, pool.time, z_pod, args=(u,) + tensors_pod)
     # e_pod += torch.linalg.norm(sol - pool.X[k,], dim=0)**2 / mean_en / n_traj
     e_pod = torch.linalg.norm(sol - pool.X[k,], dim=0)**2 / mean_en
-    plt.plot(time, e_pod.cpu().numpy(), color=cPOD, linestyle=lPOD, alpha=0.3)
+    if k == 0:
+        plt.plot(time, e_pod.cpu().numpy(), color=cPOD, linestyle=lPOD, alpha=1.0, label='POD-Gal.')
+    else:
+        plt.plot(time, e_pod.cpu().numpy(), color=cPOD, linestyle=lPOD, alpha=0.3)
 
     # OpInf
     z_oi = psi_pod.T @ pool.X[k,:,0]
     sol = phi_pod @ my_rk4_adaptive(opt_obj.evaluate_rom_rhs, pool.time, z_oi, args=(u,) + tensors_oi)
     # e_oi += torch.linalg.norm(sol - pool.X[k,], dim=0)**2 / mean_en / n_traj
     e_oi = torch.linalg.norm(sol - pool.X[k,], dim=0)**2 / mean_en
-    plt.plot(time, e_oi.cpu().numpy(), color=cOI, linestyle=lOI, alpha=0.3)
+    if k == 0:
+        plt.plot(time, e_oi.cpu().numpy(), color=cOI, linestyle=lOI, alpha=1.0, label='OpInf')
+    else:
+        plt.plot(time, e_oi.cpu().numpy(), color=cOI, linestyle=lOI, alpha=0.3)
 
     # OpInf GS
     z_oi_gs = psi_pod.T @ pool.X[k,:,0]
     sol = phi_pod @ my_rk4_adaptive(opt_obj.evaluate_rom_rhs, pool.time, z_oi_gs, args=(u,) + tensors_oi_gs)
     # e_oi_gs += torch.linalg.norm(sol - pool.X[k,], dim=0)**2 / mean_en / n_traj
     e_oi_gs = torch.linalg.norm(sol - pool.X[k,], dim=0)**2 / mean_en
-    plt.plot(time, e_oi_gs.cpu().numpy(), color=cOI_gs, linestyle=lOI_gs, alpha=0.3)
+    if k == 0:
+        plt.plot(time, e_oi_gs.cpu().numpy(), color=cOI_gs, linestyle=lOI_gs, alpha=1.0, label='OpInf-GS')
+    else:
+        plt.plot(time, e_oi_gs.cpu().numpy(), color=cOI_gs, linestyle=lOI_gs, alpha=0.3)
 
     # NiTROM
     z_nit = psi_nit.T @ pool.X[k,:,0]
     sol = phi_nit @ my_rk4_adaptive(opt_obj.evaluate_rom_rhs, pool.time, z_nit, args=(u,) + tensors_nit)
     # e_nit += torch.linalg.norm(sol - pool.X[k,], dim=0)**2 / mean_en / n_traj
     e_nit = torch.linalg.norm(sol - pool.X[k,], dim=0)**2 / mean_en
-    plt.plot(time, e_nit.cpu().numpy(), color=cNIT, linestyle=lNIT, alpha=0.3)
+    if k == 0:
+        plt.plot(time, e_nit.cpu().numpy(), color=cNIT, linestyle=lNIT, alpha=1.0, label='NiTROM')
+    else:
+        plt.plot(time, e_nit.cpu().numpy(), color=cNIT, linestyle=lNIT, alpha=0.3)
 
-    # # NiTROM GS
-    # z_nit_gs = psi_nit_gs.T @ pool.X[k,:,0]
-    # sol = phi_nit_gs @ my_rk4_adaptive(opt_obj.evaluate_rom_rhs, pool.time, z_nit_gs, args=(u,) + tensors_nit_gs)
+    # NiTROM GS
+    z_nit_gs = psi_nit_gs.T @ pool.X[k,:,0]
+    sol = phi_nit_gs @ my_rk4_adaptive(opt_obj.evaluate_rom_rhs, pool.time, z_nit_gs, args=(u,) + tensors_nit_gs)
     # e_nit_gs += torch.linalg.norm(sol - pool.X[k,], dim=0)**2 / mean_en / n_traj
-    # # e_nit_gs = torch.linalg.norm(sol - pool.X[k,], dim=0)**2 / mean_en
-    # # plt.plot(time, e_nit_gs.cpu().numpy(), color=cNIT_gs, linestyle=lNIT_gs, alpha=0.3)
+    e_nit_gs = torch.linalg.norm(sol - pool.X[k,], dim=0)**2 / mean_en
+    if k == 0:
+        plt.plot(time, e_nit_gs.cpu().numpy(), color=cNIT_gs, linestyle=lNIT_gs, alpha=1.0, label='NiTROM-GS')
+    else:
+        plt.plot(time, e_nit_gs.cpu().numpy(), color=cNIT_gs, linestyle=lNIT_gs, alpha=0.3)
 
 
 # plt.plot(time, e_pod.cpu().numpy(), label='POD', color=cPOD, linestyle=lPOD)
 # plt.plot(time, e_oi.cpu().numpy(), label='OpInf', color=cOI, linestyle=lOI)
-# plt.plot(time, e_oi_gs.cpu().numpy(), label='OpInf (GS)', color=cOI_gs, linestyle=lOI_gs)
+# plt.plot(time, e_oi_gs.cpu().numpy(), label='GsOpInf', color=cOI_gs, linestyle=lOI_gs)
 # plt.plot(time, e_nit.cpu().numpy(), label='NiTROM', color=cNIT, linestyle=lNIT)
-# plt.plot(time, e_nit_gs.cpu().numpy(), label='NiTROM (GS)', color=cNIT_gs, linestyle=lNIT_gs)
+# plt.plot(time, e_nit_gs.cpu().numpy(), label='GsNiTROM', color=cNIT_gs, linestyle=lNIT_gs)
 plt.xlabel('Time')
 plt.ylabel('Error')
 # plt.legend()

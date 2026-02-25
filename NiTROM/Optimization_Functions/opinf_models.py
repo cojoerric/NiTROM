@@ -122,7 +122,7 @@ class OpinfModel(nn.Module):
         )
 
     def forward(self):
-        return self.cost_fun(*self.param_tuple())
+        return self.cost_fn(*self.param_tuple())
     
     def param_tuple(self):
         return self.params.param_tuple()

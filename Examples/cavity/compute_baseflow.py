@@ -43,7 +43,7 @@ lops = classes.linear_operators_2D(flow,dt)
 
 ## Compute baseflow
 nsave = 1000
-time = dt*np.arange(0,n*800,1)
+time = dt*np.arange(0,n*1500,1)
 q0 = np.zeros(flow.szu+flow.szv)
 bc_coefs = [0,0,1,0,0,0,0,0] # ul, ur, ub, ut, vl, vr, vb, vt
 data, tsave = tstep.solver_2D(flow,lops,q0,time,nsave,bc_coefs)

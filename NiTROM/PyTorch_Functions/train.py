@@ -124,6 +124,9 @@ def train_model(
         def _compute_and_set_grads():
             nonlocal last_grad_norm, last_loss, last_gphi, last_gpsi
             cost_val = cost_fn(*model.param_tuple())
+            if not isinstance(cost_val, torch.Tensor):
+                ref = next(model.parameters())
+                cost_val = torch.tensor(cost_val, device=ref.device, dtype=ref.dtype)
             grads = grad_fn(*model.param_tuple())
 
             if is_dist:
