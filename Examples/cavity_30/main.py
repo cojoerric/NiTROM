@@ -32,11 +32,11 @@ if rank == 0:
     print(f"Using {world_size} GPU(s) for distributed training.")
     print(f"Device: {device}")
 
-use_ic = 1
-run_pod = 0
+use_ic = 0
+run_pod = 1
 run_opinf = 0
-run_opinf_gs = 0
-run_nitrom = 1
+run_opinf_gs = 1
+run_nitrom = 0
 run_nitrom_gs = 0
 
 Lx = 1
@@ -175,23 +175,72 @@ if run_opinf:
 ## Compute globally stable OpInf model
 if run_opinf_gs:
     print("\nTraining OpInf (GS) Model...")
-    init = utils.create_initial_guess(A_ic, H_ic, r=r)
-    params_oi = oi_model.OpinfParams_GloballyStable(pool, r, poly_comp, init=init, requires_grad=True).to(device)
-    model_oi = oi_model.OpinfModel(phi_pod, params_oi, opt_obj).to(device)
-    optimizer_oi = torch.optim.LBFGS(model_oi.parameters(), lr=1.0, max_iter=20, history_size=10, line_search_fn='strong_wolfe')
+    init = utils.create_intitial_guess(A_ic, H_ic, r=r)
 
-    model_oi, history = train.train_model(
-        model_oi,
+    weights = pool.weights.clone()
+    pool.weights *= pool.n_traj*pool.n_snapshots
+
+    lam = np.logspace(-6,-3,num=30)
+    cost_oi_gs = []
+    for count, l in enumerate(lam):
+        params_oi_gs = oi_model.OpinfParams_GloballyStable(pool, r, poly_comp, init=init, requires_grad=True).to(device)
+        model_oi_gs = oi_model.OpinfModel(phi_pod, params_oi_gs, opt_obj, regularization_H=l).to(device)
+        optimizer_oi_gs = torch.optim.LBFGS(model_oi_gs.parameters(), lr=1.0, max_iter=20, history_size=10, line_search_fn='strong_wolfe')
+        if count == 0:
+            num_epochs = 2500
+        else:
+            num_epochs = 1000
+
+        model_oi_gs, history = train.train_model(
+            model_oi_gs,
+            pool,
+            optimizer_oi_gs,
+            num_epochs=num_epochs,
+            log_every=500,
+        )
+
+        Qhat = model_oi_gs.params.Qhat.detach()
+        Jhat = model_oi_gs.params.Jhat.detach()
+        Rhat = model_oi_gs.params.Rhat.detach()
+        Hhat = model_oi_gs.params.Hhat.detach()
+        init = {
+            "Phi": phi_pod,
+            "Psi": psi_pod,
+            "Qhat": Qhat,
+            "Jhat": Jhat,
+            "Rhat": Rhat,
+            "Hhat": Hhat,
+        }
+        params_oi_gs = nit_model.NitromParams_GloballyStable(pool, r, poly_comp, init=init, requires_grad=True).to(device)
+        model_oi_gs = nit_model.NitromModel(params_oi_gs, opt_obj, fom, integrator).to(device)
+        cost_oi_gs.append(model_oi_gs().item())
+        print(f"  Lambda {count+1}/{len(lam)}: {l:.4e}, Cost: {cost_oi_gs[-1]:.6e}")
+
+    pool.weights = weights
+
+    lambdas = [0.0,lam[np.argmin(cost_oi_gs)]]
+    print(lambdas, np.min(cost_oi_gs))
+
+    weights = pool.weights.clone()
+    pool.weights *= pool.n_traj*pool.n_snapshots
+
+    params_oi_gs = oi_model.OpinfParams_GloballyStable(pool, r, poly_comp, init=init, requires_grad=True).to(device)
+    model_oi_gs = oi_model.OpinfModel(phi_pod, params_oi_gs, opt_obj, regularization_H=lambdas[1]).to(device)
+    optimizer_oi_gs = torch.optim.LBFGS(model_oi_gs.parameters(), lr=1.0, max_iter=20, history_size=10, line_search_fn='strong_wolfe')
+    model_oi_gs, history = train.train_model(
+        model_oi_gs,
         pool,
-        optimizer_oi,
+        optimizer_oi_gs,
         num_epochs=2500,
         log_every=100,
     )
 
-    Qhat = model_oi.params.Qhat.detach()
-    Jhat = model_oi.params.Jhat.detach()
-    Rhat = model_oi.params.Rhat.detach()
-    Hhat = model_oi.params.Hhat.detach()
+    pool.weights = weights
+
+    Qhat = model_oi_gs.params.Qhat.detach()
+    Jhat = model_oi_gs.params.Jhat.detach()
+    Rhat = model_oi_gs.params.Rhat.detach()
+    Hhat = model_oi_gs.params.Hhat.detach()
     A_oi_gs, H_oi_gs = utils.construct_operators((Qhat, Jhat, Rhat, Hhat), poly_comp)[0]
 
     np.save('results/Qhat_oi_gs.npy', Qhat.cpu().numpy())
@@ -293,7 +342,7 @@ if run_nitrom:
 if run_nitrom_gs:
     print("\nTraining NiTROM (GS) Model...")
     if run_nitrom:
-        init = utils.create_initial_guess(A_nit, H_nit, r=r)
+        init = utils.create_intitial_guess(A_nit, H_nit, r=r)
         init["Phi"] = phi_nit.clone()
         init["Psi"] = psi_nit.clone()
     else:
