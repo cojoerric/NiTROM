@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 
 from NiTROM.Optimization_Functions import classes, nitrom_models as nit_model, opinf_models as oi_model, opinf_closed_form as oi_cf, utils
 from NiTROM.PyTorch_Functions import gpu_utils, train, integrators
+from NiTROM.PyTorch_Functions.linear_interpolation import Interp1D
 import fom_class_pytorch
 
 plt.rcParams['figure.dpi'] = 100
@@ -89,95 +90,103 @@ A_pod, H_pod = tensors_pod
 
 
 ## Compute OpInf model
-# print("\nComputing OpInf Model...")
-# lambdas = torch.logspace(-8, -2, steps=100, device=device, dtype=dtype)
-# cost_oi = torch.zeros_like(lambdas)
-# for i, lamb in enumerate(lambdas):
-#     print(f"Lambda: {lamb:.2e}")
-#     tensors_oi = oi_cf.operator_inference(pool, phi_pod, poly_comp, lambdas=[0.0, lamb])
-#     A_oi, H_oi = tensors_oi
-#     point = {
-#         "Phi": phi_pod,
-#         "Psi": psi_pod,
-#         "A2": A_oi,
-#         "A3": H_oi,
-#     }
-#     params_nit = nit_model.NitromParams(pool, r, poly_comp, init=point, requires_grad=True).to(device)
-#     model_nit = nit_model.NitromModel(params_nit, opt_obj, fom, integrator).to(device)
-#     cost_oi[i] = model_nit().item()
+print("\nComputing OpInf Model...")
+weights = pool.weights.clone()
+pool.weights *= pool.n_traj*pool.n_snapshots
+lambdas = torch.logspace(-8, -2, steps=100, device=device, dtype=dtype)
+# lambdas = torch.tensor([0.0], device=device, dtype=dtype)
+cost_oi = torch.zeros_like(lambdas)
+for i, lamb in enumerate(lambdas):
+    print(f"Lambda: {lamb:.2e}")
+    tensors_oi = oi_cf.operator_inference(pool, phi_pod, poly_comp, lambdas=[0.0, lamb])
+    A_oi, H_oi = tensors_oi
+    point = {
+        "Phi": phi_pod,
+        "Psi": psi_pod,
+        "A2": A_oi,
+        "A3": H_oi,
+    }
+    params_nit = nit_model.NitromParams(pool, r, poly_comp, init=point, requires_grad=True).to(device)
+    model_nit = nit_model.NitromModel(params_nit, opt_obj, fom, integrator).to(device)
+    cost_oi[i] = model_nit().item()
 
-# lambdas = torch.argmin(cost_oi)
-# print(torch.min(cost_oi), lambdas)
-# tensors_oi = oi_cf.operator_inference(pool, phi_pod, poly_comp, lambdas=[0.0, lambdas])
-# A_oi, H_oi = tensors_oi
+pool.weights = weights
+lambdas_idx = torch.argmin(cost_oi)
+lambdas = lambdas[lambdas_idx]
+print(torch.min(cost_oi), lambdas)
+weights = pool.weights.clone()
+pool.weights *= pool.n_traj*pool.n_snapshots
+tensors_oi = oi_cf.operator_inference(pool, phi_pod, poly_comp, lambdas=[0.0, lambdas])
+A_oi, H_oi = tensors_oi
+pool.weights = weights
 
-# np.save('results/A_oi.npy', A_oi.cpu().numpy())
-# np.save('results/H_oi.npy', H_oi.cpu().numpy())
+np.save('results/A_oi.npy', A_oi.cpu().numpy())
+np.save('results/H_oi.npy', H_oi.cpu().numpy())
 
 
-# ## Compute globally stable OpInf model
-# print("\nTraining OpInf (GS) Model...")
-# lambdas = torch.logspace(-8, -2, steps=100, device=device, dtype=dtype)
-# cost_oi_gs = torch.zeros_like(lambdas)
-# init = {
-#     "A2": A_pod,
-#     "A3": H_pod,
-# }
-# for i, lamb in enumerate(lambdas):
-#     print(f"Lambda: {lamb:.2e}")
-#     params_oi = oi_model.OpinfParams_GloballyStable(pool, r, poly_comp, init=init, requires_grad=True).to(device)
-#     model_oi = oi_model.OpinfModel(phi_pod, params_oi, opt_obj).to(device)
-#     optimizer_oi = torch.optim.LBFGS(model_oi.parameters(), lr=1.0, max_iter=20, history_size=10, line_search_fn='strong_wolfe')
+## Compute globally stable OpInf model
+print("\nTraining OpInf (GS) Model...")
+weights = pool.weights.clone()
+pool.weights *= pool.n_traj*pool.n_snapshots
+lambdas = torch.logspace(-8, -2, steps=100, device=device, dtype=dtype)
+# lambdas = torch.tensor([0.0], device=device, dtype=dtype)
+cost_oi_gs = torch.zeros_like(lambdas)
+init = utils.create_initial_guess(A_pod, H_pod, r=r)
+for i, lamb in enumerate(lambdas):
+    print(f"Lambda: {lamb:.2e}")
+    params_oi = oi_model.OpinfParams_GloballyStable(pool, r, poly_comp, init=init, requires_grad=True).to(device)
+    model_oi = oi_model.OpinfModel(phi_pod, params_oi, opt_obj, regularization_H=lamb).to(device)
+    optimizer_oi = torch.optim.LBFGS(model_oi.parameters(), lr=1.0, max_iter=20, history_size=10, line_search_fn='strong_wolfe')
 
-#     model_oi, history = train.train_model(
-#         model_oi,
-#         pool,
-#         optimizer_oi,
-#         num_epochs=30,
-#         log_every=15,
-#     )
-#     Qhat = model_oi.params.Qhat.detach()
-#     Jhat = model_oi.params.Jhat.detach()
-#     Rhat = model_oi.params.Rhat.detach()
-#     Hhat = model_oi.params.Hhat.detach()
-#     point = {
-#         "Phi": phi_pod,
-#         "Psi": psi_pod,
-#         "Qhat": Qhat,
-#         "Jhat": Jhat,
-#         "Rhat": Rhat,
-#         "Hhat": Hhat
-#     }
-#     A_oi_gs, H_oi_gs = utils.construct_operators((Qhat, Jhat, Rhat, Hhat), poly_comp)[0]
-#     init = {
-#         "A2": A_oi_gs,
-#         "A3": H_oi_gs,
-#     }
-#     params_nit_gs = nit_model.NitromParams_GloballyStable(pool, r, poly_comp, init=point, requires_grad=True).to(device)
-#     model_nit_gs = nit_model.NitromModel(params_nit_gs, opt_obj, fom, integrator).to(device)
-#     cost_oi_gs[i] = model_nit_gs().item()
+    model_oi, history = train.train_model(
+        model_oi,
+        pool,
+        optimizer_oi,
+        num_epochs=60,
+        log_every=30,
+    )
+    Qhat = model_oi.params.Qhat.detach()
+    Jhat = model_oi.params.Jhat.detach()
+    Rhat = model_oi.params.Rhat.detach()
+    Hhat = model_oi.params.Hhat.detach()
+    point = {
+        "Phi": phi_pod,
+        "Psi": psi_pod,
+        "Qhat": Qhat,
+        "Jhat": Jhat,
+        "Rhat": Rhat,
+        "Hhat": Hhat
+    }
+    params_nit_gs = nit_model.NitromParams_GloballyStable(pool, r, poly_comp, init=point, requires_grad=True).to(device)
+    model_nit_gs = nit_model.NitromModel(params_nit_gs, opt_obj, fom, integrator).to(device)
+    cost_oi_gs[i] = model_nit_gs().item()
 
-# lambdas = torch.argmin(cost_oi_gs)
-# print(torch.min(cost_oi_gs), lambdas)
-# params_oi = oi_model.OpinfParams_GloballyStable(pool, r, poly_comp, init=init, requires_grad=True).to(device)
-# model_oi = oi_model.OpinfModel(phi_pod, params_oi, opt_obj).to(device)
-# optimizer_oi = torch.optim.LBFGS(model_oi.parameters(), lr=1.0, max_iter=20, history_size=10, line_search_fn='strong_wolfe')
-# model_oi, history = train.train_model(
-#     model_oi,
-#     pool,
-#     optimizer_oi,
-#     num_epochs=30,
-#     log_every=15,
-# )
-# Qhat = model_oi.params.Qhat.detach()
-# Jhat = model_oi.params.Jhat.detach()
-# Rhat = model_oi.params.Rhat.detach()
-# Hhat = model_oi.params.Hhat.detach()
-# A_oi_gs, H_oi_gs = utils.construct_operators((Qhat, Jhat, Rhat, Hhat), poly_comp)[0]
-# tensors_oi_gs = (A_oi_gs, H_oi_gs)
+pool.weights = weights
+lambdas_idx = torch.argmin(cost_oi_gs)
+lambdas = lambdas[lambdas_idx]
+print(torch.min(cost_oi_gs), lambdas)
+weights = pool.weights.clone()
+pool.weights *= pool.n_traj*pool.n_snapshots
+params_oi = oi_model.OpinfParams_GloballyStable(pool, r, poly_comp, init=init, requires_grad=True).to(device)
+model_oi = oi_model.OpinfModel(phi_pod, params_oi, opt_obj, regularization_H=lambdas).to(device)
+optimizer_oi = torch.optim.LBFGS(model_oi.parameters(), lr=1.0, max_iter=20, history_size=10, line_search_fn='strong_wolfe')
+model_oi, history = train.train_model(
+    model_oi,
+    pool,
+    optimizer_oi,
+    num_epochs=60,
+    log_every=30,
+)
+Qhat = model_oi.params.Qhat.detach()
+Jhat = model_oi.params.Jhat.detach()
+Rhat = model_oi.params.Rhat.detach()
+Hhat = model_oi.params.Hhat.detach()
+A_oi_gs, H_oi_gs = utils.construct_operators((Qhat, Jhat, Rhat, Hhat), poly_comp)[0]
+tensors_oi_gs = (A_oi_gs, H_oi_gs)
+pool.weights = weights
 
-# np.save('results/A_oi_gs.npy', A_oi_gs.cpu().numpy())
-# np.save('results/H_oi_gs.npy', H_oi_gs.cpu().numpy())
+np.save('results/A_oi_gs.npy', A_oi_gs.cpu().numpy())
+np.save('results/H_oi_gs.npy', H_oi_gs.cpu().numpy())
 
 
 ## Compute NiTROM model
@@ -196,10 +205,9 @@ model_nit, history = train.train_model(
     model_nit,
     pool,
     optimizer_nit,
-    num_epochs=100,
+    num_epochs=20,
     log_every=1,
     manifold_retraction="qr",
-    lbfgs_updates_manifold=True,
     vector_transport=True,
 )
 
@@ -217,21 +225,30 @@ np.save('results/H_nit.npy', H_nit.cpu().numpy())
 
 ## Compute globally stable NiTROM model
 print("\nTraining NiTROM (GS) Model...")
-init = utils.create_intitial_guess(A_pod, H_pod, r=r)
-init["Phi"] = phi_pod.clone()
-init["Psi"] = psi_pod.clone()
+# init = utils.create_initial_guess(A_pod, H_pod, r=r)
+# init["Phi"] = phi_pod.clone()
+# init["Psi"] = psi_pod.clone()
+init = {
+    "Phi": phi_pod,
+    "Psi": psi_pod,
+    "Jhat": Jhat,
+    "Qhat": Qhat,
+    "Rhat": Rhat,
+    "Hhat": Hhat
+}
 
 params_nit_gs = nit_model.NitromParams_GloballyStable(pool, r, poly_comp, init=init, requires_grad=True).to(device)
 model_nit_gs = nit_model.NitromModel(params_nit_gs, opt_obj, fom, integrator).to(device)
-optimizer_nit_gs = torch.optim.AdamW(model_nit_gs.parameters(), lr=1e-1, weight_decay=1e-5)
+optimizer_nit_gs = torch.optim.LBFGS(model_nit_gs.parameters(), lr=1.0, max_iter=20, history_size=10, line_search_fn='strong_wolfe')
 
 model_nit_gs, history = train.train_model(
     model_nit_gs,
     pool,
     optimizer_nit_gs,
-    num_epochs=100,
+    num_epochs=15,
     log_every=1,
     manifold_retraction="qr",
+    vector_transport=True,
 )
 
 phi_nit_gs = model_nit_gs.params.Phi.detach()
@@ -241,60 +258,9 @@ Jhat = model_nit_gs.params.Jhat.detach()
 Rhat = model_nit_gs.params.Rhat.detach()
 Hhat = model_nit_gs.params.Hhat.detach()
 A_nit_gs, H_nit_gs = utils.construct_operators((Qhat, Jhat, Rhat, Hhat), poly_comp)[0]
+tensors_nit_gs = (A_nit_gs, H_nit_gs)
 
 np.save('results/phi_nit_gs.npy', phi_nit_gs.cpu().numpy())
 np.save('results/psi_nit_gs.npy', psi_nit_gs.cpu().numpy())
 np.save('results/A_nit_gs.npy', A_nit_gs.cpu().numpy())
 np.save('results/H_nit_gs.npy', H_nit_gs.cpu().numpy())
-
-
-# Plot errors
-max_val = 5/20
-betas = torch.rand(100, dtype=dtype, device=device)*0.999*max_val
-t_eval = torch.linspace(0, 10, steps=100, device=device, dtype=dtype)
-error_pod = torch.zeros_like(t_eval)
-error_oi = torch.zeros_like(t_eval)
-error_oi_gs = torch.zeros_like(t_eval)
-error_nit = torch.zeros_like(t_eval)
-error_nit_gs = torch.zeros_like(t_eval)
-
-for k in range(len(betas)):
-    u = betas[k]*torch.ones(n, device=device, dtype=dtype)
-    x0 = torch.zeros(n, device=device, dtype=dtype)
-    z0 = torch.zeros(r, device=device, dtype=dtype)
-
-    sol = integrators.my_rk4_adaptive(fom.evaluate_fom_dynamics, t_eval, x0, args=(u,))
-    id_ss = torch.tensor([-betas[k]/(-1 + 4*betas[k]), -betas[k]/(-2 + 4*betas[k]), betas[k]/5], device=device, dtype=dtype)
-    weight = torch.norm(fom.compute_output(id_ss))**2
-
-    sol_pod_r = integrators.my_rk4_adaptive(opt_obj.evaluate_rom_rhs, t_eval, z0, args=(psi_pod.T@u,) + tensors_pod)
-    sol_pod = phi_pod @ sol_pod_r
-    error_pod += torch.norm(C @ (sol_pod - sol), dim=0)**2 / weight / len(betas)
-
-    sol_oi_r = integrators.my_rk4_adaptive(opt_obj.evaluate_rom_rhs, t_eval, z0, args=(psi_pod.T@u,) + tensors_oi)
-    sol_oi = phi_pod @ sol_oi_r
-    error_oi += torch.norm(C @ (sol_oi - sol), dim=0)**2 / weight / len(betas)
-
-    sol_oi_gs_r = integrators.my_rk4_adaptive(opt_obj.evaluate_rom_rhs, t_eval, z0, args=(psi_pod.T@u,) + tensors_oi_gs)
-    sol_oi_gs = phi_pod @ sol_oi_gs_r
-    error_oi_gs += torch.norm(C @ (sol_oi_gs - sol), dim=0)**2 / weight / len(betas)
-
-    sol_nit_r = integrators.my_rk4_adaptive(opt_obj.evaluate_rom_rhs, t_eval, z0, args=(psi_nit.T@u,) + tensors_nit)
-    sol_nit = phi_nit @ sol_nit_r
-    error_nit += torch.norm(C @ (sol_nit - sol), dim=0)**2 / weight / len(betas)
-
-    sol_nit_gs_r = integrators.my_rk4_adaptive(opt_obj.evaluate_rom_rhs, t_eval, z0, args=(psi_nit_gs.T@u,) + (A_nit_gs, H_nit_gs))
-    sol_nit_gs = phi_nit_gs @ sol_nit_gs_r
-    error_nit_gs += torch.norm(C @ (sol_nit_gs - sol), dim=0)**2 / weight / len(betas)
-
-plt.figure()
-plt.semilogy(t_eval.cpu(), error_pod.cpu(), label='POD', color=cPOD, linestyle=lPOD)
-plt.semilogy(t_eval.cpu(), error_oi.cpu(), label='OpInf', color=cOI, linestyle=lOI)
-plt.semilogy(t_eval.cpu(), error_oi_gs.cpu(), label='OpInf (GS)', color=cOI_gs, linestyle=lOI_gs)
-plt.semilogy(t_eval.cpu(), error_nit.cpu(), label='NiTROM', color=cNIT, linestyle=lNIT)
-plt.semilogy(t_eval.cpu(), error_nit_gs.cpu(), label='NiTROM (GS)', color=cNIT_gs, linestyle=lNIT_gs)
-plt.xlabel('Time')
-plt.ylabel('Error')
-plt.legend()
-plt.tight_layout()
-plt.savefig('figures/error_20')
