@@ -34,7 +34,7 @@ if rank == 0:
 
 use_ic = 0
 run_pod = 1
-run_opinf = 1
+run_opinf = 0
 run_opinf_gs = 1
 run_nitrom = 0
 run_nitrom_gs = 0
@@ -87,7 +87,7 @@ r = 50               # ROM dimension
 poly_comp = [1,2]   # Model with a linear part and a quadratic part
 
 which_trajs = torch.arange(0,pool.n_traj,1,device=device)
-which_times = torch.arange(0,pool.n_snapshots//2,1,device=device)
+which_times = torch.arange(0,pool.n_snapshots,1,device=device)
 leggauss_deg = 5
 nsave_rom = 15
 
