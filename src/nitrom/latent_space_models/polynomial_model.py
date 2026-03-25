@@ -14,41 +14,67 @@ class PolynomialModel(Model):
 
     where :math:`z` is the state and :math:`u` some external forcing.
 
+    :param r: reduced state dimension
+    :type r: int
     :param poly_comp: list of polynomial degrees, e.g. ``[1, 2]`` for linear + quadratic
     :type poly_comp: list[int]
-    :param tensors: list of operator tensors :math:`[A_1, A_2, \ldots]` with shapes
-        :math:`(n,)^{k+1}`
-    :type tensors: list[torch.Tensor]
+    :param device: device for tensor allocation
+    :type device: torch.device or str
+    :param dtype: data type for tensors
+    :type dtype: torch.dtype
     :param instability_threshold: norm threshold above which the state is considered blown up
     :type instability_threshold: float
+    :param tensors: optional list of operator tensors :math:`[A_1, A_2, \ldots]`.
+        If ``None``, tensors are initialized to zero.  When
+        ``forcing_config`` is set, the last tensor is ``B``.
+    :type tensors: list[torch.Tensor] or None
+    :param forcing_config: optional dict with keys ``"forcing_exists"``
+        (bool) and ``"m"`` (int, forcing input dimension).  When provided
+        and ``forcing_exists`` is ``True``, the last entry of ``tensors``
+        (or a zero-initialized ``(r, m)`` matrix) is treated as ``B``.
+    :type forcing_config: dict or None
     """
 
     def __init__(
         self,
+        r: int,
         poly_comp: list[int],
-        tensors: list[torch.Tensor],
+        device: torch.device | str = "cpu",
+        dtype: torch.dtype = torch.float64,
         instability_threshold: float = 1e6,
-        B: torch.Tensor=None,
+        tensors: list[torch.Tensor] = None,
+        forcing_config: dict | None = None,
     ):
-        super().__init__()
+        forcing_exists = forcing_config is not None and forcing_config.get(
+            "forcing_exists", False
+        )
+        param_names = [f"A_{k}" for k in poly_comp]
+        if forcing_exists:
+            param_names.append("B")
+        super().__init__(r, param_names, device, dtype)
+
         self.poly_comp = poly_comp
-        self.tensors = tensors
         self.thresh = instability_threshold
-        self._param_names = [f"A_{k}" for k in poly_comp]
+        self.forcing_exists = forcing_exists
 
-        self.B = B
-        self.forcing_exists = True if B is not None else False
+        # Initialize tensors to zero if not provided
+        if tensors is None:
+            tensors = [
+                torch.zeros((r,) * (k + 1), device=self.device, dtype=self.dtype)
+                for k in poly_comp
+            ]
+            if self.forcing_exists:
+                m = forcing_config["m"]
+                tensors.append(
+                    torch.zeros((r, m), device=self.device, dtype=self.dtype)
+                )
+        self.update_params(tensors)
+        self._generate_einsum_subscripts()
 
-    @property
-    def param_names(self) -> list[str]:
-        """
-        Get the names of the model parameters.
+    def get_params(self) -> list[torch.Tensor]:
+        """Return the current parameter tensors as a list."""
+        return [getattr(self, name) for name in self.param_names]
 
-        :rtype: list[str]
-        """
-        return self._param_names
-
-    
     def _generate_einsum_subscripts(self) -> None:
         """
         Generates the indices for the einsum evaluation of the
@@ -61,14 +87,16 @@ class PolynomialModel(Model):
             ss.append(ssk)
         self.einsum_ss = tuple(ss)
 
-    def update(self, tensors: list[torch.Tensor]) -> None:
+    def update_params(self, tensors: list[torch.Tensor]) -> None:
         r"""
         Update the operator tensors of the polynomial model.
 
-        :param tensors: new list of operator tensors :math:`[A_1, A_2, \ldots]`
+        :param tensors: new list of operator tensors :math:`[A_1, A_2, \ldots]`,
+            in the same order as :attr:`param_names`
         :type tensors: list[torch.Tensor]
         """
-        self.tensors = tensors
+        for name, tensor in zip(self.param_names, tensors):
+            setattr(self, name, tensor)
 
     def evaluate_rhs(self, t: float, z: torch.Tensor, **kwargs) -> torch.Tensor:
         r"""
@@ -89,6 +117,7 @@ class PolynomialModel(Model):
         """
 
         f_fun_lst = kwargs.get("external_forcing", None)
+        tensors = self.get_params()
 
         # z is a vector
         if z.ndim == 1:
@@ -100,12 +129,13 @@ class PolynomialModel(Model):
             dzdt = torch.zeros_like(z)
             for i, k in enumerate(self.poly_comp):
                 equation = ",".join(self.einsum_ss[i])
-                operands = [self.tensors[i]] + [z for _ in range(k)]
+                operands = [tensors[i]] + [z for _ in range(k)]
                 dzdt += torch.einsum(equation, *operands)
 
             # Add the forcing
             if f_fun_lst is not None:
-                dzdt += self.B @ f_fun_lst[0](t)
+                f = f_fun_lst[0](t)
+                dzdt += self.B @ f if self.forcing_exists else f
 
         # z is a tensor (we use batching to evaluate all vectors at once)
         else:
@@ -122,14 +152,15 @@ class PolynomialModel(Model):
                 parts = self.einsum_ss[i]
                 eq_parts = [parts[0]] + [f"...{p}" for p in parts[1:]]
                 equation = ",".join(eq_parts)
-                operands = [self.tensors[i]] + [z[mask] for _ in range(k)]
+                operands = [tensors[i]] + [z[mask] for _ in range(k)]
                 dzdt[mask] += torch.einsum(equation, *operands)
 
             # Add the external forcing
             if f_fun_lst is not None:
                 for i in range(len(f_fun_lst)):
                     if mask[i] and f_fun_lst[i] is not None:
-                        dzdt[i] += self.B @ f_fun_lst[i](t)
+                        f = f_fun_lst[i](t)
+                        dzdt[i] += self.B @ f if self.forcing_exists else f
 
         return dzdt
 
@@ -155,6 +186,7 @@ class PolynomialModel(Model):
         :rtype: torch.Tensor
         """
         n = z.shape[-1]
+        tensors = self.get_params()
 
         # z is a vector
         if z.ndim == 1:
@@ -168,7 +200,7 @@ class PolynomialModel(Model):
                 if k == 0:
                     continue
                 combs = list(combinations(self.einsum_ss[i][1:], r=k - 1))
-                operands = [self.tensors[i]] + [Z for _ in range(k - 1)]
+                operands = [tensors[i]] + [Z for _ in range(k - 1)]
                 for comb in combs:
                     equation = ",".join([self.einsum_ss[i][0]] + list(comb))
                     J += torch.einsum(equation, *operands)
@@ -192,7 +224,7 @@ class PolynomialModel(Model):
                 for comb in combs:
                     eq_parts = [self.einsum_ss[i][0]] + [f"...{p}" for p in comb]
                     equation = ",".join(eq_parts)
-                    operands = [self.tensors[i]] + [Z[mask] for _ in range(k - 1)]
+                    operands = [tensors[i]] + [Z[mask] for _ in range(k - 1)]
                     Jb += torch.einsum(equation, *operands)
             dzdt[mask] = torch.einsum("bnm,bn->bm", Jb, z[mask])
 
@@ -251,24 +283,18 @@ class PolynomialModel(Model):
                 u = f_fun_lst[0](t)
                 grads.append(torch.outer(v, u))
         else:
-            norms = torch.linalg.vector_norm(z, dim=-1)
-            mask = norms < self.thresh
-            z_stable = z[mask]
-            v_stable = v[mask]
-
             for i, k in enumerate(self.poly_comp):
                 ss = self.einsum_ss[i]
                 out_subscript = ss[0]
                 in_subscripts = [f"...{s}" for s in ss[0]]
                 equation = ",".join(in_subscripts) + "->" + out_subscript
-                operands = [v_stable] + [z_stable for _ in range(k)]
+                operands = [v] + [z for _ in range(k)]
                 grads.append(torch.einsum(equation, *operands))
 
-            # grad_B = sum_j v_j @ u_j(t)^T (over stable batch items)
+            # grad_B = sum_j v_j @ u_j(t)^T
             if f_fun_lst is not None:
-                idxs = mask.nonzero(as_tuple=False).squeeze(-1)
                 grad_B = torch.zeros_like(self.B)
-                for j in idxs:
+                for j in range(z.shape[0]):
                     u = f_fun_lst[j](t)
                     grad_B += torch.outer(v[j], u)
                 grads.append(grad_B)

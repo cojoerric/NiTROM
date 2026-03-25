@@ -4,21 +4,61 @@ import abc
 
 
 class Model(metaclass=abc.ABCMeta):
-    r"""Abstract base class for NiTROM"""
+    r"""Abstract base class for NiTROM
+
+    :param r: reduced state dimension
+    :type r: int
+    :param device: device for tensor allocation
+    :type device: torch.device or str
+    :param dtype: data type for tensors
+    :type dtype: torch.dtype
+    """
+
+    def __init__(
+        self,
+        r: int,
+        param_names: list[str],
+        device: torch.device | str = "cpu",
+        dtype: torch.dtype = torch.float64,
+    ):
+        self._r = r
+        self._device = torch.device(device)
+        self._dtype = dtype
+        self._param_names = param_names
 
     @property
-    @abc.abstractmethod
-    def param_names(self) -> list[str]:
-        """
-        Names of the model parameters.
+    def state_dimension(self) -> int:
+        """Reduced state dimension."""
+        return self._r
 
-        :rtype: list[str]
+    @property
+    def device(self) -> torch.device:
+        """Device on which tensors are allocated."""
+        return self._device
+
+    @property
+    def dtype(self) -> torch.dtype:
+        """Data type of tensors."""
+        return self._dtype
+
+    @property
+    def param_names(self) -> list[str]:
+        """Names of the model parameters."""
+        return self._param_names
+
+    @abc.abstractmethod
+    def get_params(self) -> list[torch.Tensor]:
+        """
+        Return the current parameter tensors as a list, in the same
+        order as :attr:`param_names`.
+
+        :rtype: list[torch.Tensor]
         """
         ...
 
     @abc.abstractmethod
-    def update(self, *args, **kwargs) -> None:
-        r"""
+    def update_params(self, *args, **kwargs) -> None:
+        """
         Update the model parameters.
         Subclasses define the specific arguments required.
         """

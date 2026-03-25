@@ -13,15 +13,21 @@ from nitrom.latent_space_models.polynomial_model import PolynomialModel
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_model(n, poly_comp, seed=42):
+def _make_model(n, poly_comp, seed=42, B=None):
     """Create a PolynomialModel with random tensors for the given poly_comp."""
     rng = np.random.default_rng(seed)
     tensors = []
     for k in poly_comp:
         shape = (n,) * (k + 1)
         tensors.append(torch.tensor(rng.standard_normal(shape), dtype=torch.float64))
-    model = PolynomialModel(poly_comp, tensors)
-    model._generate_einsum_subscripts()
+    if B is not None:
+        tensors.append(B)
+        forcing_config = {"forcing_exists": True, "m": B.shape[1]}
+    else:
+        forcing_config = None
+    model = PolynomialModel(
+        n, poly_comp, tensors=tensors, forcing_config=forcing_config,
+    )
     return model
 
 
@@ -145,27 +151,26 @@ class TestEvaluateRhs:
         model, poly_comp, z_np, z_torch, _, _ = model_and_data
 
         result = model.evaluate_rhs(0.0, z_torch)
-        expected = _reference_rhs(model.tensors, poly_comp, z_np)
+        expected = _reference_rhs(model.get_params(), poly_comp, z_np)
 
         np.testing.assert_allclose(result.numpy(), expected, rtol=1e-12)
 
     def test_unbatched_with_forcing(self, model_and_data):
-        model, poly_comp, z_np, z_torch, _, _ = model_and_data
+        _, poly_comp, z_np, z_torch, _, _ = model_and_data
 
         rng = np.random.default_rng(99)
         B_np = rng.standard_normal((N, N))
         B_torch = torch.tensor(B_np, dtype=torch.float64)
-        model.B = B_torch
+        model_f = _make_model(N, poly_comp, seed=42, B=B_torch)
 
         forcing_val = rng.standard_normal(N)
         forcing_torch = torch.tensor(forcing_val, dtype=torch.float64)
         f_fun = lambda t: forcing_torch
 
-        result = model.evaluate_rhs(0.0, z_torch, external_forcing=[f_fun])
-        expected = _reference_rhs(model.tensors, poly_comp, z_np) + B_np @ forcing_val
+        result = model_f.evaluate_rhs(0.0, z_torch, external_forcing=[f_fun])
+        expected = _reference_rhs(model_f.get_params(), poly_comp, z_np) + B_np @ forcing_val
 
         np.testing.assert_allclose(result.numpy(), expected, rtol=1e-12)
-        model.B = None
 
     def test_batched_no_forcing(self, model_and_data):
         model, poly_comp, _, _, z_batch_np, z_batch_torch = model_and_data
@@ -173,19 +178,19 @@ class TestEvaluateRhs:
         result = model.evaluate_rhs(0.0, z_batch_torch)
 
         for j in range(M):
-            expected_j = _reference_rhs(model.tensors, poly_comp, z_batch_np[j])
+            expected_j = _reference_rhs(model.get_params(), poly_comp, z_batch_np[j])
             np.testing.assert_allclose(
                 result[j].numpy(), expected_j, rtol=1e-12,
                 err_msg=f"Mismatch at batch index {j}",
             )
 
     def test_batched_with_forcing(self, model_and_data):
-        model, poly_comp, _, _, z_batch_np, z_batch_torch = model_and_data
+        _, poly_comp, _, _, z_batch_np, z_batch_torch = model_and_data
 
         rng = np.random.default_rng(77)
         B_np = rng.standard_normal((N, N))
         B_torch = torch.tensor(B_np, dtype=torch.float64)
-        model.B = B_torch
+        model_f = _make_model(N, poly_comp, seed=42, B=B_torch)
 
         forcing_vals = [rng.standard_normal(N) for _ in range(M)]
         forcing_funs = [
@@ -193,15 +198,14 @@ class TestEvaluateRhs:
             for fv in forcing_vals
         ]
 
-        result = model.evaluate_rhs(0.0, z_batch_torch, external_forcing=forcing_funs)
+        result = model_f.evaluate_rhs(0.0, z_batch_torch, external_forcing=forcing_funs)
 
         for j in range(M):
-            expected_j = _reference_rhs(model.tensors, poly_comp, z_batch_np[j]) + B_np @ forcing_vals[j]
+            expected_j = _reference_rhs(model_f.get_params(), poly_comp, z_batch_np[j]) + B_np @ forcing_vals[j]
             np.testing.assert_allclose(
                 result[j].numpy(), expected_j, rtol=1e-10,
                 err_msg=f"Mismatch at batch index {j}",
             )
-        model.B = None
 
     def test_unbatched_blowup_returns_zeros(self, model_and_data):
         model, _, _, _, _, _ = model_and_data
@@ -225,7 +229,7 @@ class TestEvaluateRhs:
 
         # Other rows should match reference
         for j in [0, 2, 3]:
-            expected_j = _reference_rhs(model.tensors, poly_comp, z_batch[j].numpy())
+            expected_j = _reference_rhs(model.get_params(), poly_comp, z_batch[j].numpy())
             np.testing.assert_allclose(
                 result[j].numpy(), expected_j, rtol=1e-12,
                 err_msg=f"Mismatch at batch index {j}",
@@ -260,7 +264,7 @@ class TestUpdateModel:
                 torch.tensor(rng.standard_normal(shape), dtype=torch.float64)
             )
 
-        model.update(new_tensors)
+        model.update_params(new_tensors)
         result_after = model.evaluate_rhs(0.0, z_torch)
 
         expected = _reference_rhs(new_tensors, poly_comp, z_np)
@@ -285,7 +289,7 @@ class TestUpdateModel:
                 torch.tensor(rng.standard_normal(shape), dtype=torch.float64)
             )
 
-        model.update(new_tensors)
+        model.update_params(new_tensors)
         result_after = model.evaluate_adjoint_rhs(0.0, z_torch, Z_torch)
 
         J = _reference_jacobian(new_tensors, poly_comp, Z_np)
@@ -308,7 +312,7 @@ class TestUpdateModel:
                 torch.tensor(rng.standard_normal(shape), dtype=torch.float64)
             )
 
-        model.update(new_tensors)
+        model.update_params(new_tensors)
         assert model.einsum_ss == ss_before
 
 
@@ -327,7 +331,7 @@ class TestEvaluateAdjointRhs:
 
         result = model.evaluate_adjoint_rhs(0.0, z_torch, Z_torch)
 
-        J = _reference_jacobian(model.tensors, poly_comp, Z_np)
+        J = _reference_jacobian(model.get_params(), poly_comp, Z_np)
         expected = J.T @ z_np
 
         np.testing.assert_allclose(result.numpy(), expected, rtol=1e-12)
@@ -346,7 +350,7 @@ class TestEvaluateAdjointRhs:
 
         result = model.evaluate_adjoint_rhs(0.0, z_batch_torch, Z_batch_torch)
 
-        J = _reference_jacobian(model.tensors, poly_comp, Z_np)
+        J = _reference_jacobian(model.get_params(), poly_comp, Z_np)
         for j in range(M):
             expected_j = J.T @ z_batch_np[j]
             np.testing.assert_allclose(
@@ -365,7 +369,7 @@ class TestEvaluateAdjointRhs:
         result = model.evaluate_adjoint_rhs(0.0, z_batch_torch, Z_batch_torch)
 
         for j in range(M):
-            J_j = _reference_jacobian(model.tensors, poly_comp, Z_batch_np[j])
+            J_j = _reference_jacobian(model.get_params(), poly_comp, Z_batch_np[j])
             expected_j = J_j.T @ z_batch_np[j]
             np.testing.assert_allclose(
                 result[j].numpy(), expected_j, rtol=1e-12,
@@ -452,7 +456,7 @@ class TestEvaluateAdjointRhs:
 
         # Other rows should match reference
         for j in [0, 2, 3]:
-            J_j = _reference_jacobian(model.tensors, poly_comp, Z_batch[j].numpy())
+            J_j = _reference_jacobian(model.get_params(), poly_comp, Z_batch[j].numpy())
             expected_j = J_j.T @ z_batch[j].numpy()
             np.testing.assert_allclose(
                 result[j].numpy(), expected_j, rtol=1e-12,
@@ -489,23 +493,23 @@ class TestVjpEvaluateRhs:
         eps = 1e-7
         for idx, k in enumerate(poly_comp):
             dA = torch.tensor(
-                rng.standard_normal(model.tensors[idx].shape), dtype=torch.float64
+                rng.standard_normal(model.get_params()[idx].shape), dtype=torch.float64
             )
 
             dd_vjp = torch.sum(grads[idx] * dA).item()
 
             # Perturb tensor idx
-            tensors_plus = [t.clone() for t in model.tensors]
-            tensors_minus = [t.clone() for t in model.tensors]
-            tensors_plus[idx] = model.tensors[idx] + eps * dA
-            tensors_minus[idx] = model.tensors[idx] - eps * dA
+            tensors_plus = [t.clone() for t in model.get_params()]
+            tensors_minus = [t.clone() for t in model.get_params()]
+            tensors_plus[idx] = model.get_params()[idx] + eps * dA
+            tensors_minus[idx] = model.get_params()[idx] - eps * dA
 
-            original_tensors = model.tensors
-            model.update(tensors_plus)
+            original_tensors = model.get_params()
+            model.update_params(tensors_plus)
             J_plus = torch.dot(v, model.evaluate_rhs(0.0, z_torch)).item()
-            model.update(tensors_minus)
+            model.update_params(tensors_minus)
             J_minus = torch.dot(v, model.evaluate_rhs(0.0, z_torch)).item()
-            model.update(original_tensors)
+            model.update_params(original_tensors)
 
             dd_fd = (J_plus - J_minus) / (2 * eps)
 
@@ -528,22 +532,22 @@ class TestVjpEvaluateRhs:
         eps = 1e-7
         for idx, k in enumerate(poly_comp):
             dA = torch.tensor(
-                rng.standard_normal(model.tensors[idx].shape), dtype=torch.float64
+                rng.standard_normal(model.get_params()[idx].shape), dtype=torch.float64
             )
 
             dd_vjp = torch.sum(grads[idx] * dA).item()
 
-            tensors_plus = [t.clone() for t in model.tensors]
-            tensors_minus = [t.clone() for t in model.tensors]
-            tensors_plus[idx] = model.tensors[idx] + eps * dA
-            tensors_minus[idx] = model.tensors[idx] - eps * dA
+            tensors_plus = [t.clone() for t in model.get_params()]
+            tensors_minus = [t.clone() for t in model.get_params()]
+            tensors_plus[idx] = model.get_params()[idx] + eps * dA
+            tensors_minus[idx] = model.get_params()[idx] - eps * dA
 
-            original_tensors = model.tensors
-            model.update(tensors_plus)
+            original_tensors = model.get_params()
+            model.update_params(tensors_plus)
             rhs_plus = model.evaluate_rhs(0.0, z_batch_torch)
-            model.update(tensors_minus)
+            model.update_params(tensors_minus)
             rhs_minus = model.evaluate_rhs(0.0, z_batch_torch)
-            model.update(original_tensors)
+            model.update_params(original_tensors)
 
             J_plus = torch.sum(v_batch * rhs_plus).item()
             J_minus = torch.sum(v_batch * rhs_minus).item()
@@ -563,22 +567,22 @@ class TestVjpEvaluateRhs:
 
         assert len(grads) == len(poly_comp)
         for idx, k in enumerate(poly_comp):
-            assert grads[idx].shape == model.tensors[idx].shape
+            assert grads[idx].shape == model.get_params()[idx].shape
 
     def test_finite_difference_B_unbatched(self, model_and_data):
         """FD check for grad_B: ⟨∂J/∂B, δB⟩ ≈ [v^T f(B+εδB) - v^T f(B-εδB)] / 2ε"""
-        model, _, _, z_torch, _, _ = model_and_data
+        _, poly_comp, _, z_torch, _, _ = model_and_data
 
         rng = np.random.default_rng(800)
         P = 3  # forcing dimension
         B = torch.tensor(rng.standard_normal((N, P)), dtype=torch.float64)
-        model.B = B
+        model_f = _make_model(N, poly_comp, seed=42, B=B)
 
         u_val = torch.tensor(rng.standard_normal(P), dtype=torch.float64)
         f_fun = lambda t: u_val
         v = torch.tensor(rng.standard_normal(N), dtype=torch.float64)
 
-        grads = model.vjp_evaluate_rhs(z_torch, v, external_forcing=[f_fun], t=0.0)
+        grads = model_f.vjp_evaluate_rhs(z_torch, v, external_forcing=[f_fun], t=0.0)
         grad_B = grads[-1]
         assert grad_B.shape == (N, P)
 
@@ -586,29 +590,35 @@ class TestVjpEvaluateRhs:
         dd_vjp = torch.sum(grad_B * dB).item()
 
         eps = 1e-7
-        model.B = B + eps * dB
-        J_plus = torch.dot(v, model.evaluate_rhs(0.0, z_torch, external_forcing=[f_fun])).item()
-        model.B = B - eps * dB
-        J_minus = torch.dot(v, model.evaluate_rhs(0.0, z_torch, external_forcing=[f_fun])).item()
-        model.B = None
+        params = model_f.get_params()
+        params_plus = [t.clone() for t in params]
+        params_minus = [t.clone() for t in params]
+        params_plus[-1] = B + eps * dB
+        params_minus[-1] = B - eps * dB
+
+        model_f.update_params(params_plus)
+        J_plus = torch.dot(v, model_f.evaluate_rhs(0.0, z_torch, external_forcing=[f_fun])).item()
+        model_f.update_params(params_minus)
+        J_minus = torch.dot(v, model_f.evaluate_rhs(0.0, z_torch, external_forcing=[f_fun])).item()
+        model_f.update_params(params)
 
         dd_fd = (J_plus - J_minus) / (2 * eps)
         np.testing.assert_allclose(dd_vjp, dd_fd, rtol=1e-5)
 
     def test_finite_difference_B_batched(self, model_and_data):
         """Batched FD check for grad_B."""
-        model, _, _, _, _, z_batch_torch = model_and_data
+        _, poly_comp, _, _, _, z_batch_torch = model_and_data
 
         rng = np.random.default_rng(801)
         P = 3
         B = torch.tensor(rng.standard_normal((N, P)), dtype=torch.float64)
-        model.B = B
+        model_f = _make_model(N, poly_comp, seed=42, B=B)
 
         u_vals = [torch.tensor(rng.standard_normal(P), dtype=torch.float64) for _ in range(M)]
         f_funs = [(lambda u: lambda t: u)(u) for u in u_vals]
         v_batch = torch.tensor(rng.standard_normal((M, N)), dtype=torch.float64)
 
-        grads = model.vjp_evaluate_rhs(z_batch_torch, v_batch, external_forcing=f_funs, t=0.0)
+        grads = model_f.vjp_evaluate_rhs(z_batch_torch, v_batch, external_forcing=f_funs, t=0.0)
         grad_B = grads[-1]
         assert grad_B.shape == (N, P)
 
@@ -616,11 +626,17 @@ class TestVjpEvaluateRhs:
         dd_vjp = torch.sum(grad_B * dB).item()
 
         eps = 1e-7
-        model.B = B + eps * dB
-        rhs_plus = model.evaluate_rhs(0.0, z_batch_torch, external_forcing=f_funs)
-        model.B = B - eps * dB
-        rhs_minus = model.evaluate_rhs(0.0, z_batch_torch, external_forcing=f_funs)
-        model.B = None
+        params = model_f.get_params()
+        params_plus = [t.clone() for t in params]
+        params_minus = [t.clone() for t in params]
+        params_plus[-1] = B + eps * dB
+        params_minus[-1] = B - eps * dB
+
+        model_f.update_params(params_plus)
+        rhs_plus = model_f.evaluate_rhs(0.0, z_batch_torch, external_forcing=f_funs)
+        model_f.update_params(params_minus)
+        rhs_minus = model_f.evaluate_rhs(0.0, z_batch_torch, external_forcing=f_funs)
+        model_f.update_params(params)
 
         J_plus = torch.sum(v_batch * rhs_plus).item()
         J_minus = torch.sum(v_batch * rhs_minus).item()

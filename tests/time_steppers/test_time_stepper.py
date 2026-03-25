@@ -25,8 +25,7 @@ def _make_model(rng):
     A2 = torch.tensor(
         0.01 * rng.standard_normal((N, N, N)), dtype=torch.float64
     )
-    model = PolynomialModel([1, 2], [A1, A2])
-    model._generate_einsum_subscripts()
+    model = PolynomialModel(N, [1, 2], tensors=[A1, A2])
     return model
 
 

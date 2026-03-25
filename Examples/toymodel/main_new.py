@@ -61,9 +61,9 @@ opt_obj = nitrom.TrainingData(
 
 Phi = nitrom.perform_POD(pool, 2)
 poly_comp = [1, 2]
-opinf_class = nitrom.OpInfCostAndGrad(opt_obj, poly_comp, Phi, 0, True)
-trained_params = nitrom.train_opinf(
-    opinf_class,
+opinf_model = nitrom.OpInfModel(opt_obj, poly_comp, Phi, reg=0, gas_flag=True)
+trained_model = nitrom.train_opinf(
+    opinf_model,
     n_epochs=10000,
     lr=1e-3,
     optimizer_type="lbfgs",
