@@ -97,12 +97,41 @@ class TestAssembleGasTensors:
             )
         if 2 in poly_comp:
             H_expected = (
-                torch.einsum("kji,kl->ijl", model.S, Qtil)
-                - torch.einsum("ijk,kl->ijl", model.S, Qtil)
+                torch.einsum("ilk,lj->ijk", model.S, Qtil)
+                - torch.einsum("lik,lj->ijk", model.S, Qtil)
             )
             np.testing.assert_allclose(
                 tensors[poly_comp.index(2)].numpy(), H_expected.numpy(), rtol=1e-12,
             )
+
+    def test_A_eigenvalues_negative(self, gas_model_and_data):
+        """All eigenvalues of A should be strictly negative."""
+        model, poly_comp, _, _, _, _ = gas_model_and_data
+        if 1 not in poly_comp:
+            pytest.skip("No linear term")
+        tensors = model.assemble_gas_tensors()
+        A = tensors[poly_comp.index(1)]
+        eigs = torch.linalg.eigvals(A).real
+        assert torch.all(eigs < 0), f"A has non-negative eigenvalues: {eigs}"
+
+    def test_H_energy_conservation(self, gas_model_and_data):
+        r"""
+        :math:`z^\top \tilde{Q}\, H(z, z) = 0` for all :math:`z`.
+        """
+        model, poly_comp, _, _, _, _ = gas_model_and_data
+        if 2 not in poly_comp:
+            pytest.skip("No quadratic term")
+        tensors = model.assemble_gas_tensors()
+        H = tensors[poly_comp.index(2)]
+        Qinv = torch.linalg.inv(model.Q)
+        Qtil = Qinv @ Qinv.T
+
+        rng = np.random.default_rng(555)
+        for _ in range(5):
+            z = torch.tensor(rng.standard_normal(R), dtype=torch.float64)
+            Hz = torch.einsum("ijk,j,k->i", H, z, z)
+            energy = z @ Qtil @ Hz
+            np.testing.assert_allclose(energy.item(), 0.0, atol=1e-10)
 
     def test_inner_model_uses_assembled_tensors(self, gas_model_and_data):
         model, poly_comp, _, _, _, _ = gas_model_and_data
@@ -269,8 +298,8 @@ def _autograd_grads(K, R, Q, S, z, v, poly_comp, B=None, f_fun=None):
             dzdt = dzdt + torch.einsum("ij,...j->...i", A, z)
     if 2 in poly_comp:
         H = (
-            torch.einsum("kji,kl->ijl", params["S"], Qtil)
-            - torch.einsum("ijk,kl->ijl", params["S"], Qtil)
+            torch.einsum("ilk,lj->ijk", params["S"], Qtil)
+            - torch.einsum("lik,lj->ijk", params["S"], Qtil)
         )
         if z.ndim == 1:
             dzdt = dzdt + torch.einsum("ijk,j,k->i", H, z, z)

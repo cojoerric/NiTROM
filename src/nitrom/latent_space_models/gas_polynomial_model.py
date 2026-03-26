@@ -16,7 +16,7 @@ class GasPolynomialModel(Model):
 
         A = \bigl((K - K^\top) - R\,R^\top\bigr)\,\tilde{Q},
         \qquad
-        H_{ijk} = (S_{kji} - S_{ijk})\,\tilde{Q}_{kl},
+        H_{ijk} = (S_{ilk} - S_{lik})\,\tilde{Q}_{lj},
 
     where :math:`\tilde{Q} = Q^{-1} Q^{-\top}`.
 
@@ -52,7 +52,6 @@ class GasPolynomialModel(Model):
         gas_params: list[torch.Tensor] | None = None,
         forcing_config: dict | None = None,
     ):
-        # Determine GAS parameter names and shapes
         # Determine GAS parameter names and shapes
         param_names: list[str] = []
         gas_shapes: list[tuple[int, ...]] = []
@@ -127,8 +126,8 @@ class GasPolynomialModel(Model):
 
         if 2 in self.poly_comp:
             idx = self.poly_comp.index(2)
-            tensors[idx] = torch.einsum("kji,kl->ijl", self.S, Qtil) - torch.einsum(
-                "ijk,kl->ijl", self.S, Qtil
+            tensors[idx] = torch.einsum("ilk,lj->ijk", self.S, Qtil) - torch.einsum(
+                "lik,lj->ijk", self.S, Qtil
             )
 
         if self.forcing_exists:
@@ -195,22 +194,23 @@ class GasPolynomialModel(Model):
             grad_R = -(grad_A @ Qtil + Qtil @ grad_A.T) @ self.R
             grads.extend([grad_K, grad_R])
 
-        # grad_Q (from Qtil = Q^{-1} Q^{-T})
+        # grad_Q, grad_S from H_{ijk} = (S_{ilk} - S_{lik}) Qtil_{lj}
         if 2 in self.poly_comp:
-            # ∂J/∂Q̃ from linear term
+            # grad_Qtil from linear term: A_pre^T @ grad_A
             A_pre = (self.K - self.K.T) - self.R @ self.R.T
             grad_Qtil = A_pre.T @ grad_A if grad_A is not None else torch.zeros_like(Qtil)
-            # ∂J/∂Q̃_{kl} = Σ_{ij} grad_H_{ijl} (S_{kji} - S_{ijk})
+            # grad_Qtil_{lj} from quadratic: Σ_{ik} grad_H_{ijk} (S_{ilk} - S_{lik})
             grad_Qtil += (
-                torch.einsum("ijl,kji->kl", grad_H, self.S)
-                - torch.einsum("ijl,ijk->kl", grad_H, self.S)
+                torch.einsum("jik,jlk->il", self.S, grad_H)
+                - torch.einsum("ijk,jlk->il", self.S, grad_H)
             )
+            # grad_Q from Qtil = Q^{-1} Q^{-T}
             grad_Q = -(Qinv.T @ grad_Qtil @ Qtil + Qinv.T @ grad_Qtil.T @ Qtil)
 
-            # grad_S_{abc} = Σ_l grad_H_{cbl} Qtil_{al} - Σ_l grad_H_{abl} Qtil_{cl}
+            # grad_S_{abc} = Σ_j grad_H_{ajc} Qtil_{bj} - Σ_j grad_H_{bjc} Qtil_{aj}
             grad_S = (
-                torch.einsum("cbl,al->abc", grad_H, Qtil)
-                - torch.einsum("abl,cl->abc", grad_H, Qtil)
+                torch.einsum("ijk,jl->ilk", grad_H, Qtil)
+                - torch.einsum("jl,ilk->jik", Qtil, grad_H)
             )
             grads.extend([grad_Q, grad_S])
 
