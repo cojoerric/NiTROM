@@ -13,36 +13,31 @@ class LinearProjection(Projection):
         \text{encode}(q) = \Psi^\top q, \qquad
         \text{decode}(z) = \Phi (\Psi^\top \Phi)^{-1} z
 
-    :param Phi: trial basis of shape ``(N, r)``
-    :type Phi: torch.Tensor
-    :param Psi: test basis of shape ``(N, r)``
-    :type Psi: torch.Tensor
+    :param bases: list of two tensors ``[Phi, Psi]``, each of shape ``(N, r)``
+    :type bases: list[torch.Tensor]
     """
 
-    def __init__(self, Phi: torch.Tensor, Psi: torch.Tensor):
-        super().__init__()
-        self.Phi = Phi
-        self.Psi = Psi
-        self.S = torch.linalg.inv(Psi.T @ Phi)
-        self._param_names = ["Phi", "Psi"]
+    def __init__(self, bases: list[torch.Tensor]):
+        Phi = bases[0]
+        n, r = Phi.shape
+        super().__init__(
+            n, r, param_names=["Phi", "Psi"],
+            device=Phi.device, dtype=Phi.dtype,
+        )
+        self.Phi = bases[0]
+        self.Psi = bases[1]
+        self.S = torch.linalg.inv(self.Psi.T @ self.Phi)
 
-    @property
-    def param_names(self) -> list[str]:
-        """
-        Get the names of the projection parameters.
-
-        :rtype: list[str]
-        """
-        return self._param_names
+    def get_params(self) -> list[torch.Tensor]:
+        """Return ``[Phi, Psi]``."""
+        return [self.Phi, self.Psi]
 
     def update(self, params: list[torch.Tensor]) -> None:
         r"""
         Update the trial and test bases and recompute :math:`S = (\Psi^\top \Phi)^{-1}`.
 
-        :param Phi: new trial basis of shape ``(N, r)``
-        :type Phi: torch.Tensor
-        :param Psi: new test basis of shape ``(N, r)``
-        :type Psi: torch.Tensor
+        :param params: list of two tensors ``[Phi, Psi]``, each of shape ``(N, r)``
+        :type params: list[torch.Tensor]
         """
         self.Phi = params[0]
         self.Psi = params[1]

@@ -5,13 +5,52 @@ import torch
 class Projection(metaclass=abc.ABCMeta):
     """Abstract base class for projections between full and reduced spaces."""
 
-    @property
-    @abc.abstractmethod
-    def param_names(self) -> list[str]:
-        """
-        Names of the projection parameters.
+    def __init__(
+        self,
+        n: int,
+        r: int,
+        param_names: list[str],
+        device: torch.device | str = "cpu",
+        dtype: torch.dtype = torch.float64,
+    ):
+        self._n = n
+        self._r = r
+        self._device = torch.device(device)
+        self._dtype = dtype
+        self._param_names = param_names
 
-        :rtype: list[str]
+    @property
+    def ambient_space_dimension(self) -> int:
+        """Ambient space dimension."""
+        return self._n
+    
+    @property
+    def latent_space_dimension(self) -> int:
+        """Ambient space dimension."""
+        return self._r
+
+    @property
+    def device(self) -> torch.device:
+        """Device on which tensors are allocated."""
+        return self._device
+
+    @property
+    def dtype(self) -> torch.dtype:
+        """Data type of tensors."""
+        return self._dtype
+
+    @property
+    def param_names(self) -> list[str]:
+        """Names of the model parameters."""
+        return self._param_names
+
+    @abc.abstractmethod
+    def get_params(self) -> list[torch.Tensor]:
+        """
+        Return the current parameter tensors as a list, in the same
+        order as :attr:`param_names`.
+
+        :rtype: list[torch.Tensor]
         """
         ...
 

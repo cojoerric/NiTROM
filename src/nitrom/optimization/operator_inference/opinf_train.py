@@ -66,7 +66,7 @@ def train_opinf(
         loss = model()
         grads = model.gradient()
         for param, grad in zip(model.parameters(), grads):
-            param.grad = grad.clone()
+            param.grad = grad.contiguous().clone()
         if is_distributed:
             for param in model.parameters():
                 dist.all_reduce(param.grad, op=dist.ReduceOp.SUM)

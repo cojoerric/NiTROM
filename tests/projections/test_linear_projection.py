@@ -27,7 +27,7 @@ def _random_bases(n, r, seed=42):
 @pytest.fixture
 def proj():
     Phi, Psi = _random_bases(N, R)
-    return LinearProjection(Phi, Psi)
+    return LinearProjection([Phi, Psi])
 
 
 # ---------------------------------------------------------------------------
@@ -158,7 +158,7 @@ class TestOrthogonalCase:
         rng = np.random.default_rng(99)
         A = torch.tensor(rng.standard_normal((N, R)), dtype=torch.float64)
         Phi, _ = torch.linalg.qr(A)
-        proj = LinearProjection(Phi, Phi)
+        proj = LinearProjection([Phi, Phi])
 
         np.testing.assert_allclose(
             proj.S.numpy(), np.eye(R), atol=1e-12
@@ -211,168 +211,140 @@ class TestUpdate:
 
 
 # ---------------------------------------------------------------------------
-# vjp_encode tests
+# vjp_encode tests (autograd)
 # ---------------------------------------------------------------------------
 
 class TestVjpEncode:
 
-    def test_finite_difference_Psi(self):
-        """
-        J(Psi) = v^T encode(q; Psi) = v^T Psi^T q.
-        Check ⟨∂J/∂Psi, δPsi⟩ ≈ [J(Psi + ε δPsi) - J(Psi - ε δPsi)] / (2ε).
-        """
+    def _build_encode_fn(self, Phi, Psi, q):
+        """Build a differentiable encode: Psi^T q."""
+        def fn(psi):
+            return psi.T @ q
+        return fn
+
+    def test_autograd_unbatched(self):
         rng = np.random.default_rng(500)
         Phi = torch.tensor(rng.standard_normal((N, R)), dtype=torch.float64)
-        Psi = torch.tensor(rng.standard_normal((N, R)), dtype=torch.float64)
+        Psi = torch.tensor(rng.standard_normal((N, R)), dtype=torch.float64, requires_grad=True)
         q = torch.tensor(rng.standard_normal(N), dtype=torch.float64)
         v = torch.tensor(rng.standard_normal(R), dtype=torch.float64)
-        dPsi = torch.tensor(rng.standard_normal((N, R)), dtype=torch.float64)
 
-        proj = LinearProjection(Phi, Psi)
-        grads = proj.vjp_encode(q, v)
-        dd_vjp = torch.sum(grads[1] * dPsi).item()
+        # Autograd
+        z = Psi.T @ q
+        J = torch.dot(v, z)
+        J.backward()
+        grad_Psi_auto = Psi.grad.clone()
+        Psi.grad = None
+        Psi.requires_grad_(False)
 
-        eps = 1e-7
-        proj_plus = LinearProjection(Phi, Psi + eps * dPsi)
-        proj_minus = LinearProjection(Phi, Psi - eps * dPsi)
-        J_plus = torch.dot(v, proj_plus.encode(q)).item()
-        J_minus = torch.dot(v, proj_minus.encode(q)).item()
-        dd_fd = (J_plus - J_minus) / (2 * eps)
+        # Analytic
+        proj = LinearProjection([Phi, Psi])
+        _, grad_Psi_analytic = proj.vjp_encode(q, v)
 
-        np.testing.assert_allclose(dd_vjp, dd_fd, rtol=1e-5)
+        np.testing.assert_allclose(
+            grad_Psi_analytic.numpy(), grad_Psi_auto.numpy(), rtol=1e-10,
+        )
 
-    def test_finite_difference_Psi_batched(self):
-        """
-        Batched: J(Psi) = sum_m v_m^T Psi^T q_m.
-        Batched inputs: q is (m, N), v is (m, r).
-        """
+    def test_autograd_batched(self):
         rng = np.random.default_rng(502)
         Phi = torch.tensor(rng.standard_normal((N, R)), dtype=torch.float64)
-        Psi = torch.tensor(rng.standard_normal((N, R)), dtype=torch.float64)
+        Psi = torch.tensor(rng.standard_normal((N, R)), dtype=torch.float64, requires_grad=True)
         q = torch.tensor(rng.standard_normal((M, N)), dtype=torch.float64)
         v = torch.tensor(rng.standard_normal((M, R)), dtype=torch.float64)
-        dPsi = torch.tensor(rng.standard_normal((N, R)), dtype=torch.float64)
 
-        proj = LinearProjection(Phi, Psi)
-        grads = proj.vjp_encode(q, v)
-        assert grads[1].shape == (N, R)
-        dd_vjp = torch.sum(grads[1] * dPsi).item()
+        # Autograd
+        z = (Psi.T @ q.T).T  # (M, R)
+        J = torch.sum(v * z)
+        J.backward()
+        grad_Psi_auto = Psi.grad.clone()
+        Psi.grad = None
+        Psi.requires_grad_(False)
 
-        eps = 1e-7
-        proj_plus = LinearProjection(Phi, Psi + eps * dPsi)
-        proj_minus = LinearProjection(Phi, Psi - eps * dPsi)
-        # J = sum_m v[m] . encode(q[m])
-        J_plus = torch.sum(v * proj_plus.encode(q)).item()
-        J_minus = torch.sum(v * proj_minus.encode(q)).item()
-        dd_fd = (J_plus - J_minus) / (2 * eps)
+        # Analytic
+        proj = LinearProjection([Phi, Psi])
+        _, grad_Psi_analytic = proj.vjp_encode(q, v)
 
-        np.testing.assert_allclose(dd_vjp, dd_fd, rtol=1e-5)
+        np.testing.assert_allclose(
+            grad_Psi_analytic.numpy(), grad_Psi_auto.numpy(), rtol=1e-10,
+        )
 
 
 # ---------------------------------------------------------------------------
-# vjp_decode tests
+# vjp_decode tests (autograd)
 # ---------------------------------------------------------------------------
 
 class TestVjpDecode:
 
-    def test_finite_difference_Phi(self):
-        """
-        J(Phi) = v^T decode(z; Phi, Psi) = v^T Phi S z.
-        Check ⟨∂J/∂Phi, δPhi⟩ via central differences.
-        """
+    def _autograd_decode(self, Phi, Psi, z, v):
+        """Compute grad_Phi, grad_Psi of J = v^T decode(z) via autograd."""
+        Phi_ = Phi.clone().requires_grad_(True)
+        Psi_ = Psi.clone().requires_grad_(True)
+        S = torch.linalg.inv(Psi_.T @ Phi_)
+        if z.ndim == 1:
+            q_hat = Phi_ @ (S @ z)
+            J = torch.dot(v, q_hat)
+        else:
+            q_hat = (Phi_ @ (S @ z.T)).T  # (M, N)
+            J = torch.sum(v * q_hat)
+        J.backward()
+        return Phi_.grad.clone(), Psi_.grad.clone()
+
+    def test_autograd_Phi_unbatched(self):
         rng = np.random.default_rng(600)
         Phi = torch.tensor(rng.standard_normal((N, R)), dtype=torch.float64)
         Psi = torch.tensor(rng.standard_normal((N, R)), dtype=torch.float64)
         z = torch.tensor(rng.standard_normal(R), dtype=torch.float64)
         v = torch.tensor(rng.standard_normal(N), dtype=torch.float64)
-        dPhi = torch.tensor(rng.standard_normal((N, R)), dtype=torch.float64)
 
-        proj = LinearProjection(Phi, Psi)
-        grads = proj.vjp_decode(z, v)
-        dd_vjp = torch.sum(grads[0] * dPhi).item()
+        grad_Phi_auto, _ = self._autograd_decode(Phi, Psi, z, v)
+        proj = LinearProjection([Phi, Psi])
+        grad_Phi_analytic, _ = proj.vjp_decode(z, v)
 
-        eps = 1e-7
-        proj_plus = LinearProjection(Phi + eps * dPhi, Psi)
-        proj_minus = LinearProjection(Phi - eps * dPhi, Psi)
-        J_plus = torch.dot(v, proj_plus.decode(z)).item()
-        J_minus = torch.dot(v, proj_minus.decode(z)).item()
-        dd_fd = (J_plus - J_minus) / (2 * eps)
+        np.testing.assert_allclose(
+            grad_Phi_analytic.numpy(), grad_Phi_auto.numpy(), rtol=1e-8,
+        )
 
-        np.testing.assert_allclose(dd_vjp, dd_fd, rtol=1e-5)
-
-    def test_finite_difference_Psi(self):
-        """
-        J(Psi) = v^T decode(z; Phi, Psi) = v^T Phi (Psi^T Phi)^{-1} z.
-        Check ⟨∂J/∂Psi, δPsi⟩ via central differences.
-        """
+    def test_autograd_Psi_unbatched(self):
         rng = np.random.default_rng(601)
         Phi = torch.tensor(rng.standard_normal((N, R)), dtype=torch.float64)
         Psi = torch.tensor(rng.standard_normal((N, R)), dtype=torch.float64)
         z = torch.tensor(rng.standard_normal(R), dtype=torch.float64)
         v = torch.tensor(rng.standard_normal(N), dtype=torch.float64)
-        dPsi = torch.tensor(rng.standard_normal((N, R)), dtype=torch.float64)
 
-        proj = LinearProjection(Phi, Psi)
-        grads = proj.vjp_decode(z, v)
-        dd_vjp = torch.sum(grads[1] * dPsi).item()
+        _, grad_Psi_auto = self._autograd_decode(Phi, Psi, z, v)
+        proj = LinearProjection([Phi, Psi])
+        _, grad_Psi_analytic = proj.vjp_decode(z, v)
 
-        eps = 1e-7
-        proj_plus = LinearProjection(Phi, Psi + eps * dPsi)
-        proj_minus = LinearProjection(Phi, Psi - eps * dPsi)
-        J_plus = torch.dot(v, proj_plus.decode(z)).item()
-        J_minus = torch.dot(v, proj_minus.decode(z)).item()
-        dd_fd = (J_plus - J_minus) / (2 * eps)
+        np.testing.assert_allclose(
+            grad_Psi_analytic.numpy(), grad_Psi_auto.numpy(), rtol=1e-8,
+        )
 
-        np.testing.assert_allclose(dd_vjp, dd_fd, rtol=1e-5)
-
-    def test_finite_difference_Phi_batched(self):
-        """
-        Batched: J(Phi) = sum_m v_m^T decode(z_m; Phi, Psi).
-        Inputs: z is (m, r), v is (m, N).
-        """
+    def test_autograd_Phi_batched(self):
         rng = np.random.default_rng(602)
         Phi = torch.tensor(rng.standard_normal((N, R)), dtype=torch.float64)
         Psi = torch.tensor(rng.standard_normal((N, R)), dtype=torch.float64)
         z = torch.tensor(rng.standard_normal((M, R)), dtype=torch.float64)
         v = torch.tensor(rng.standard_normal((M, N)), dtype=torch.float64)
-        dPhi = torch.tensor(rng.standard_normal((N, R)), dtype=torch.float64)
 
-        proj = LinearProjection(Phi, Psi)
-        grads = proj.vjp_decode(z, v)
-        assert grads[0].shape == (N, R)
-        dd_vjp = torch.sum(grads[0] * dPhi).item()
+        grad_Phi_auto, _ = self._autograd_decode(Phi, Psi, z, v)
+        proj = LinearProjection([Phi, Psi])
+        grad_Phi_analytic, _ = proj.vjp_decode(z, v)
 
-        eps = 1e-7
-        proj_plus = LinearProjection(Phi + eps * dPhi, Psi)
-        proj_minus = LinearProjection(Phi - eps * dPhi, Psi)
-        J_plus = torch.sum(v * proj_plus.decode(z)).item()
-        J_minus = torch.sum(v * proj_minus.decode(z)).item()
-        dd_fd = (J_plus - J_minus) / (2 * eps)
+        np.testing.assert_allclose(
+            grad_Phi_analytic.numpy(), grad_Phi_auto.numpy(), rtol=1e-8,
+        )
 
-        np.testing.assert_allclose(dd_vjp, dd_fd, rtol=1e-5)
-
-    def test_finite_difference_Psi_batched(self):
-        """
-        Batched: J(Psi) = sum_m v_m^T decode(z_m; Phi, Psi).
-        Inputs: z is (m, r), v is (m, N).
-        """
+    def test_autograd_Psi_batched(self):
         rng = np.random.default_rng(603)
         Phi = torch.tensor(rng.standard_normal((N, R)), dtype=torch.float64)
         Psi = torch.tensor(rng.standard_normal((N, R)), dtype=torch.float64)
         z = torch.tensor(rng.standard_normal((M, R)), dtype=torch.float64)
         v = torch.tensor(rng.standard_normal((M, N)), dtype=torch.float64)
-        dPsi = torch.tensor(rng.standard_normal((N, R)), dtype=torch.float64)
 
-        proj = LinearProjection(Phi, Psi)
-        grads = proj.vjp_decode(z, v)
-        assert grads[1].shape == (N, R)
-        dd_vjp = torch.sum(grads[1] * dPsi).item()
+        _, grad_Psi_auto = self._autograd_decode(Phi, Psi, z, v)
+        proj = LinearProjection([Phi, Psi])
+        _, grad_Psi_analytic = proj.vjp_decode(z, v)
 
-        eps = 1e-7
-        proj_plus = LinearProjection(Phi, Psi + eps * dPsi)
-        proj_minus = LinearProjection(Phi, Psi - eps * dPsi)
-        J_plus = torch.sum(v * proj_plus.decode(z)).item()
-        J_minus = torch.sum(v * proj_minus.decode(z)).item()
-        dd_fd = (J_plus - J_minus) / (2 * eps)
-
-        np.testing.assert_allclose(dd_vjp, dd_fd, rtol=1e-5)
+        np.testing.assert_allclose(
+            grad_Psi_analytic.numpy(), grad_Psi_auto.numpy(), rtol=1e-8,
+        )

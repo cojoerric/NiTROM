@@ -134,7 +134,7 @@ class PolynomialModel(Model):
 
             # Add the forcing
             if f_fun_lst is not None:
-                f = f_fun_lst[0](t)
+                f = torch.atleast_1d(f_fun_lst[0](t))
                 dzdt += self.B @ f if self.forcing_exists else f
 
         # z is a tensor (we use batching to evaluate all vectors at once)
@@ -159,7 +159,7 @@ class PolynomialModel(Model):
             if f_fun_lst is not None:
                 for i in range(len(f_fun_lst)):
                     if mask[i] and f_fun_lst[i] is not None:
-                        f = f_fun_lst[i](t)
+                        f = torch.atleast_1d(f_fun_lst[i](t))
                         dzdt[i] += self.B @ f if self.forcing_exists else f
 
         return dzdt
@@ -280,7 +280,7 @@ class PolynomialModel(Model):
 
             # grad_B = v @ u(t)^T
             if f_fun_lst is not None:
-                u = f_fun_lst[0](t)
+                u = torch.atleast_1d(f_fun_lst[0](t))
                 grads.append(torch.outer(v, u))
         else:
             for i, k in enumerate(self.poly_comp):
@@ -295,7 +295,7 @@ class PolynomialModel(Model):
             if f_fun_lst is not None:
                 grad_B = torch.zeros_like(self.B)
                 for j in range(z.shape[0]):
-                    u = f_fun_lst[j](t)
+                    u = torch.atleast_1d(f_fun_lst[j](t))
                     grad_B += torch.outer(v[j], u)
                 grads.append(grad_B)
 

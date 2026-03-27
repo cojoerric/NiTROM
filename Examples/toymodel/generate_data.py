@@ -37,7 +37,7 @@ weights = np.zeros(n_traj)
 
 
 for k in range(n_traj):
-    u = lambda t: betas[k] * np.ones(3)
+    u = lambda t, b=betas[k]: b * np.ones(3)
 
     sol = solve_ivp(
         fom.evaluate_fom_dynamics,
@@ -50,7 +50,7 @@ for k in range(n_traj):
 
     dX = np.zeros((3, len(time)))
     for j in range(sol.y.shape[-1]):
-        dX[:, j] = fom.evaluate_fom_dynamics(time[j], sol.y[:, j], u) - u(time[j])
+        dX[:, j] = fom.evaluate_fom_dynamics(time[j], sol.y[:, j], u)
 
     id_ss = np.asarray(
         [
@@ -61,6 +61,7 @@ for k in range(n_traj):
     )
     weights[k] = np.linalg.norm(fom.compute_output(id_ss)) ** 2
 
+    u = lambda t, b=betas[k]: b
     np.save(fname_traj % k, sol.y)
     np.save(fname_deriv % k, dX)
     np.save(fname_weight % k, [weights[k]])

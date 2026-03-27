@@ -98,8 +98,7 @@ class TestProjectionAbstract:
 
     def test_complete_subclass_instantiates(self):
         class Complete(Projection):
-            @property
-            def param_names(self):
+            def get_params(self):
                 return []
 
             def update(self, *args, **kwargs):
@@ -117,7 +116,7 @@ class TestProjectionAbstract:
             def vjp_decode(self, z, v, *args, **kwargs):
                 return ()
 
-        proj = Complete()
+        proj = Complete(n=4, r=4, param_names=[])
         x = torch.randn(4)
         assert proj.encode(x).shape == x.shape
         assert proj.decode(x).shape == x.shape

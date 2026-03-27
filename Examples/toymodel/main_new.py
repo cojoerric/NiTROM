@@ -61,7 +61,10 @@ opt_obj = nitrom.TrainingData(
 
 Phi = nitrom.perform_POD(pool, 2)
 poly_comp = [1, 2]
-opinf_model = nitrom.OpInfModel(opt_obj, poly_comp, Phi, reg=0, gas_flag=True)
+forcing_config = {"forcing_exists": True, "m": 1}
+opinf_model = nitrom.OpInfModel(
+    opt_obj, poly_comp, Phi, reg=0, gas_flag=True, forcing_config=forcing_config,
+)
 trained_model = nitrom.train_opinf(
     opinf_model,
     n_epochs=10000,
@@ -70,5 +73,25 @@ trained_model = nitrom.train_opinf(
     print_every=1,
     tol=1e-12,
 )
+
+# Print trained parameters
+if rank == 0:
+    rom = trained_model.rom
+    print("\n=== Trained GAS Parameters ===")
+    for name in rom.param_names:
+        print(f"\n{name}:")
+        print(getattr(rom, name))
+
+    print("\n=== Assembled Physical Operators ===")
+    tensors = rom.assemble_gas_tensors()
+    labels = [f"A_{k}" for k in poly_comp]
+    if rom.forcing_exists:
+        labels.append("B")
+    for label, tensor in zip(labels, tensors):
+        print(f"\n{label}:")
+        print(tensor)
+
+    print(f"\nTrue A:\n{Phi.T @ A2 @ Phi}")
+    print(f"\nTrue B:\n{Phi.T @ B}")
 
 nitrom.cleanup_distributed()
