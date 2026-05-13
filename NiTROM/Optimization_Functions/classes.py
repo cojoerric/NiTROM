@@ -85,7 +85,7 @@ class pool:
         if fname_weights != None:
             self.fnames_weights = [fname_weights%k for k in self.traj_indices]
             weights = [np.load(self.fnames_weights[k]) for k in range(len(self.fnames_weights))]
-            for k in range (self.my_n_traj): weights2[k] = weights[k]
+            for k in range (self.my_n_traj): weights2[k] = weights[k][0]
         self.weights = torch.tensor(weights2, device=self.device, dtype=self.dtype)
             
     def load_steady_forcing(self,kwargs):

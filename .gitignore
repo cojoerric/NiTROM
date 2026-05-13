@@ -170,4 +170,6 @@ cython_debug/
 **/data/
 **/results/
 **/figures/
-
+*.png
+*.pdf
+*.eps

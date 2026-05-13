@@ -1,7 +1,7 @@
 import torch
 
 
-def create_intitial_guess(A, H=None, r=None):
+def create_initial_guess(A, H=None, r=None):
     """
     Build initialization tensors for the globally stable model from A (and optional H).
     The construction uses Q = I, J = skew(A), R = -sym(A) projected to PSD, and Hhat = 0.5 * H.
@@ -58,8 +58,9 @@ def compute_Q(Qhat):
 
 def compute_JR(Jhat, Rhat):
     J = Jhat - Jhat.T
-    R = Rhat @ Rhat.T
-    return J, R
+    R_inv = torch.linalg.inv(Rhat)
+    R = R_inv @ R_inv.T
+    return J, R, R_inv
 
 def compute_H(Hhat, Q):
     H2 = Hhat.permute(2, 1, 0)
@@ -78,10 +79,10 @@ def construct_operators(tensors, poly_comp):
     if 1 in poly_comp:
         Jhat = tensors[1]
         Rhat = tensors[2]
-        J, R = compute_JR(Jhat, Rhat)
+        J, R, R_inv = compute_JR(Jhat, Rhat)
         A = (J - R) @ Q
         tensors_new.append(A)
-        other_tensors.extend([J, R])
+        other_tensors.extend([J, R, R_inv])
     if 2 in poly_comp:
         Hhat = tensors[-1]
         H = compute_H(Hhat, Q)
@@ -95,11 +96,10 @@ def propagate_gradients(grads, tensors, tensors_hat, poly_comp):
     grad_Q = torch.zeros_like(Q)
 
     if 1 in poly_comp:
-        J = tensors[2]; R = tensors[3]
-        Rhat = tensors_hat[2]
+        J = tensors[2]; R = tensors[3]; R_inv = tensors[4]
         grad_A = grads[0]
         grad_J = grad_A @ Q.T; grad_R = -grad_J; grad_Q += (J - R).T @ grad_A
-        grad_Jhat = grad_J - grad_J.T; grad_Rhat = (grad_R + grad_R.T) @ Rhat
+        grad_Jhat = grad_J - grad_J.T; grad_Rhat =  - R_inv.T @ (grad_R + grad_R.T) @ R
         grad_tensors[1] = grad_Jhat; grad_tensors[2] = grad_Rhat
     if 2 in poly_comp:
         Hhat = tensors_hat[-1]
