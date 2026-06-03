@@ -5,9 +5,9 @@ from nitrom.latent_space_models.polynomial_model import PolynomialModel
 from nitrom.latent_space_models.gas_polynomial_model import GasPolynomialModel
 
 
-class OpInfModel(nn.Module):
+class OpInfModule(nn.Module):
     r"""
-    Operator-inference model backed by :class:`PolynomialModel` or
+    Operator-inference module backed by :class:`PolynomialModel` or
     :class:`GasPolynomialModel`.
 
     Minimizes the weighted least-squares cost

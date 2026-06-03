@@ -60,13 +60,51 @@ opt_obj = nitrom.TrainingData(
 )
 
 Phi = nitrom.perform_POD(pool, 2)
-poly_comp = [1, 2]
-forcing_config = {"forcing_exists": True, "m": 1}
-opinf_model = nitrom.OpInfModel(
-    opt_obj, poly_comp, Phi, reg=0, gas_flag=True, forcing_config=forcing_config,
+# poly_comp = [1, 2]
+# forcing_config = {"forcing_exists": True, "m": 1}
+# opinf_model = nitrom.OpInfModule(
+#     opt_obj, poly_comp, Phi, reg=0, gas_flag=True, forcing_config=forcing_config,
+# )
+# trained_model = nitrom.train_opinf(
+#     opinf_model,
+#     n_epochs=10000,
+#     lr=1e-3,
+#     optimizer_type="lbfgs",
+#     print_every=1,
+#     tol=1e-12,
+# )
+
+# # Print trained parameters
+# if rank == 0:
+#     rom = trained_model.rom
+#     print("\n=== Trained GAS Parameters ===")
+#     for name in rom.param_names:
+#         print(f"\n{name}:")
+#         print(getattr(rom, name))
+
+#     print("\n=== Assembled Physical Operators ===")
+#     tensors = rom.assemble_gas_tensors()
+#     labels = [f"A_{k}" for k in poly_comp]
+#     if rom.forcing_exists:
+#         labels.append("B")
+#     for label, tensor in zip(labels, tensors):
+#         print(f"\n{label}:")
+#         print(tensor)
+
+#     print(f"\nTrue A:\n{Phi.T @ A2 @ Phi}")
+#     print(f"\nTrue B:\n{Phi.T @ B}")
+
+# ---------------------------------------------------------------------------
+# Train a quadratic manifold: decode(z) = Phi z + P A2 z⊗z
+# ---------------------------------------------------------------------------
+if rank == 0:
+    print("\n\n=== Training Quadratic Manifold ===")
+
+manifold_model = nitrom.PolyManifoldInfModule(
+    opt_obj, nonlin_poly_comp=[2], Phi=Phi, Psi=Phi, reg=0.0,
 )
-trained_model = nitrom.train_opinf(
-    opinf_model,
+trained_manifold = nitrom.train_opinf(
+    manifold_model,
     n_epochs=10000,
     lr=1e-3,
     optimizer_type="lbfgs",
@@ -74,24 +112,20 @@ trained_model = nitrom.train_opinf(
     tol=1e-12,
 )
 
-# Print trained parameters
 if rank == 0:
-    rom = trained_model.rom
-    print("\n=== Trained GAS Parameters ===")
-    for name in rom.param_names:
-        print(f"\n{name}:")
-        print(getattr(rom, name))
+    proj = trained_manifold.proj
+    print("\n=== Trained Quadratic Manifold A2 ===")
+    print(proj.A2)
 
-    print("\n=== Assembled Physical Operators ===")
-    tensors = rom.assemble_gas_tensors()
-    labels = [f"A_{k}" for k in poly_comp]
-    if rom.forcing_exists:
-        labels.append("B")
-    for label, tensor in zip(labels, tensors):
-        print(f"\n{label}:")
-        print(tensor)
+    # Compute reconstruction error on training data
+    Z_flat = trained_manifold.Z.permute(0, 2, 1).reshape(-1, Phi.shape[1])
+    X_flat = opt_obj.X.permute(0, 2, 1).reshape(-1, Phi.shape[0])
+    X_hat_linear = (Phi @ (Phi.T @ X_flat.T)).T
+    X_hat_quad = proj.decode(Z_flat)
 
-    print(f"\nTrue A:\n{Phi.T @ A2 @ Phi}")
-    print(f"\nTrue B:\n{Phi.T @ B}")
+    err_linear = torch.norm(X_flat - X_hat_linear) / torch.norm(X_flat)
+    err_quad = torch.norm(X_flat - X_hat_quad) / torch.norm(X_flat)
+    print(f"\nRelative reconstruction error (linear POD): {err_linear.item():.6e}")
+    print(f"Relative reconstruction error (quad manifold): {err_quad.item():.6e}")
 
 nitrom.cleanup_distributed()

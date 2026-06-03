@@ -1,3 +1,4 @@
-from .operator_inference.opinf_model import OpInfModel
+from .operator_inference.opinf_module import OpInfModule
 from .operator_inference.opinf_train import train_opinf
+from .polynomial_manifold_inference.polynomial_manifold_inference_module import PolyManifoldInfModule
 from .rom_utils import perform_POD

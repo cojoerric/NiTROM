@@ -1,10 +1,10 @@
-"""Tests for OpInfModel with and without gas_flag."""
+"""Tests for OpInfModule with and without gas_flag."""
 
 import numpy as np
 import pytest
 import torch
 
-from nitrom.optimization.operator_inference.opinf_model import OpInfModel
+from nitrom.optimization.operator_inference.opinf_module import OpInfModule
 
 
 # ---------------------------------------------------------------------------
@@ -50,21 +50,21 @@ def model(request):
     opt_obj = _MockOptObj(NTRAJ, N, NT, dtype=DTYPE, seed=0)
     Phi = _make_phi(N, R)
     poly_comp = [1, 2]
-    return OpInfModel(opt_obj, poly_comp, Phi, reg=0.01, gas_flag=gas_flag)
+    return OpInfModule(opt_obj, poly_comp, Phi, reg=0.01, gas_flag=gas_flag)
 
 
 @pytest.fixture()
 def model_standard():
     opt_obj = _MockOptObj(NTRAJ, N, NT, dtype=DTYPE, seed=0)
     Phi = _make_phi(N, R)
-    return OpInfModel(opt_obj, [1, 2], Phi, reg=0.01, gas_flag=False)
+    return OpInfModule(opt_obj, [1, 2], Phi, reg=0.01, gas_flag=False)
 
 
 @pytest.fixture()
 def model_gas():
     opt_obj = _MockOptObj(NTRAJ, N, NT, dtype=DTYPE, seed=0)
     Phi = _make_phi(N, R)
-    return OpInfModel(opt_obj, [1, 2], Phi, reg=0.01, gas_flag=True)
+    return OpInfModule(opt_obj, [1, 2], Phi, reg=0.01, gas_flag=True)
 
 
 def _make_forcing_fns(ntraj, m, seed=77):
@@ -89,7 +89,7 @@ def model_standard_forcing():
     opt_obj = _MockOptObj(NTRAJ, N, NT, dtype=DTYPE, seed=0, forcing_fns=forcing_fns)
     Phi = _make_phi(N, R)
     fc = {"forcing_exists": True, "m": M}
-    return OpInfModel(opt_obj, [1, 2], Phi, reg=0.01, gas_flag=False, forcing_config=fc)
+    return OpInfModule(opt_obj, [1, 2], Phi, reg=0.01, gas_flag=False, forcing_config=fc)
 
 
 @pytest.fixture()
@@ -98,7 +98,7 @@ def model_gas_forcing():
     opt_obj = _MockOptObj(NTRAJ, N, NT, dtype=DTYPE, seed=0, forcing_fns=forcing_fns)
     Phi = _make_phi(N, R)
     fc = {"forcing_exists": True, "m": M}
-    return OpInfModel(opt_obj, [1, 2], Phi, reg=0.01, gas_flag=True, forcing_config=fc)
+    return OpInfModule(opt_obj, [1, 2], Phi, reg=0.01, gas_flag=True, forcing_config=fc)
 
 
 # ---------------------------------------------------------------------------
@@ -212,7 +212,7 @@ class TestInitialGuess:
             torch.eye(R, dtype=DTYPE),
             torch.zeros(R, R, R, dtype=DTYPE),
         ]
-        model = OpInfModel(opt_obj, poly_comp, Phi, initial_guess=init)
+        model = OpInfModule(opt_obj, poly_comp, Phi, initial_guess=init)
 
         params = list(model.parameters())
         np.testing.assert_allclose(params[0].detach().numpy(), init[0].numpy())
@@ -229,7 +229,7 @@ class TestInitialGuess:
             torch.eye(R, dtype=DTYPE),       # Q
             0.01 * torch.randn(R, R, R, dtype=DTYPE),  # S
         ]
-        model = OpInfModel(opt_obj, poly_comp, Phi, gas_flag=True, initial_guess=init)
+        model = OpInfModule(opt_obj, poly_comp, Phi, gas_flag=True, initial_guess=init)
 
         params = list(model.parameters())
         assert len(params) == 4

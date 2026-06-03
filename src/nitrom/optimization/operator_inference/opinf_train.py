@@ -1,17 +1,17 @@
 import torch
 import torch.distributed as dist
 
-from .opinf_model import OpInfModel
+from .opinf_module import OpInfModule
 
 
 def train_opinf(
-    model: OpInfModel,
+    model: OpInfModule,
     n_epochs: int = 1000,
     lr: float = 1e-3,
     optimizer_type: str = "adam",
     print_every: int = 100,
     tol: float = 1e-10,
-) -> OpInfModel:
+) -> OpInfModule:
     r"""
     Train an operator-inference model by minimizing the OpInf cost
     using analytic gradients.
@@ -22,7 +22,7 @@ def train_opinf(
 
     :param model: the OpInf model (already configured with training
         data, basis, regularization, etc.)
-    :type model: OpInfModel
+    :type model: OpInfModule
     :param n_epochs: number of optimization iterations
     :type n_epochs: int
     :param lr: learning rate
@@ -36,7 +36,7 @@ def train_opinf(
         training stops early if ``|loss - loss_prev| / |loss_prev| < tol``
     :type tol: float
     :returns: the trained model
-    :rtype: OpInfModel
+    :rtype: OpInfModule
     """
     is_distributed = dist.is_initialized()
     rank = dist.get_rank() if is_distributed else 0
