@@ -28,7 +28,7 @@ dx = Lx/Nx
 dy = Ly/Ny
 Re = 8300
 
-flow = classes.flow_parameters(Lx,Ly,Nx,Ny,Re)
+flow = classes.flow_class(Lx,Ly,Nx,Ny,Re)
 
 n = 400
 dt = 1.0/n
@@ -37,12 +37,12 @@ lops = classes.linear_operators_2D(flow,dt)
 
 #%% Compute base flow
 nsave = 1000
-time = dt*np.arange(0,n*800,1)
+time = dt*np.arange(0,n*1600,1)
 q0 = np.zeros(flow.szu+flow.szv)
 # q0 = np.load("bflow_Re%d_Nx%d_Ny%d.npy"%(Re,Nx,Ny))
 
 # q0 = data[:,-1].copy()
-data, tsave = tstep.nonlinear_solver_2D(flow,lops,q0,time,nsave)
+data, tsave = tstep.solver_2D(flow,lops,q0,time,nsave,[0,0,1,0,0,0,0,0])
 
 #%%
 idx0 = 0

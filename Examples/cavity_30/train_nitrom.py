@@ -80,7 +80,7 @@ fname_deriv = traj_path + "deriv_%03d.npy"
 fname_time = traj_path + "time.npy"
 
 
-amps = np.load(traj_path + "amps_train.npy")
+amps = np.load(traj_path + "amps.npy")
 Phi_pre = np.load(traj_path + "Phi_pre.npy")
 n_traj = len(amps)
 
@@ -92,7 +92,7 @@ pool_kwargs = {'fname_weights':fname_weight}
 pool = classes.mpi_pool(*pool_inputs,**pool_kwargs)
 
 
-r = 50                # ROM dimension
+r = 30                # ROM dimension
 poly_comp = [1,2]       # Model with a linear part and a quadratic part
 
 
@@ -100,17 +100,17 @@ Phi_pod = np.zeros((n,r))
 Phi_pod[:r,:r] = np.eye(r)
 Psi_pod = Phi_pod.copy()
 
-# A2_oi = np.load("data/A2_oi.npy")
-# A3_oi = np.load("data/A3_oi.npy").reshape((r,r,r))
-# tensors_oi = (A2_oi,A3_oi)
-# point = (Phi_pod,Phi_pod) + tensors_oi
+A2_oi = np.load("data/A2_oi.npy")
+A3_oi = np.load("data/A3_oi.npy").reshape((r,r,r))
+tensors_oi = (A2_oi,A3_oi)
+point = (Phi_pod,Phi_pod) + tensors_oi
 
-Phi_nit = np.load("data/Phi_nit.npy")
-Psi_nit = np.load("data/Psi_nit.npy")
-A2_nit = np.load("data/A2_nit.npy")
-A3_nit = np.load("data/A3_nit.npy").reshape((r,r,r))
-tensors_nit = (A2_nit,A3_nit)
-point = (Phi_nit,Psi_nit) + tensors_nit
+# Phi_nit = np.load("data/Phi_nit.npy")
+# Psi_nit = np.load("data/Psi_nit.npy")
+# A2_nit = np.load("data/A2_nit.npy")
+# A3_nit = np.load("data/A3_nit.npy").reshape((r,r,r))
+# tensors_nit = (A2_nit,A3_nit)
+# point = (Phi_nit,Psi_nit) + tensors_nit
 
 
 #%%
@@ -118,7 +118,7 @@ point = (Phi_nit,Psi_nit) + tensors_nit
 rand_vec = np.random.randn(r)
 line_searcher = myAdaptiveLineSearcher(contraction_factor=0.5,sufficient_decrease=0.1,max_iterations=25,initial_step_size=1)
 
-for factor in np.arange(16,17,1):
+for factor in np.arange(1,17,1):
     
     which_trajs = np.arange(0,pool.my_n_traj,1)
     which_times = np.arange(0,10*factor,1)
@@ -131,7 +131,7 @@ for factor in np.arange(16,17,1):
         print("---------- Running with factor %d -----------------------"%factor)
     
     opt_obj_inputs = (pool,which_trajs,which_times,leggauss_deg,nsave_rom,[1,2])
-    opt_obj_kwargs = {'stab_promoting_pen':1e-3,'stab_promoting_tf':100,'stab_promoting_ic':(rand_vec,)}
+    # opt_obj_kwargs = {'stab_promoting_pen':1e-3,'stab_promoting_tf':100,'stab_promoting_ic':(rand_vec,)}
     
     opt_obj = classes.optimization_objects(*opt_obj_inputs)#,**opt_obj_kwargs)
     
@@ -145,7 +145,7 @@ for factor in np.arange(16,17,1):
     else:               verb = 0
     
     k0 = 0
-    kouter = 50
+    kouter = 100
     
     if k0 == 0:
         costvec_nit = []
@@ -158,7 +158,8 @@ for factor in np.arange(16,17,1):
         # which_fix = 'fix_bases'
     
         opt_obj_inputs = (pool,which_trajs,which_times,leggauss_deg,nsave_rom,poly_comp)
-        opt_obj_kwargs = {'which_fix':which_fix,'stab_promoting_pen':1e-3,'stab_promoting_tf':100,'stab_promoting_ic':(rand_vec,)}
+        # opt_obj_kwargs = {'which_fix':which_fix,'stab_promoting_pen':1e-3,'stab_promoting_tf':100,'stab_promoting_ic':(rand_vec,)}
+        opt_obj_kwargs = {'which_fix':which_fix}
         opt_obj = classes.optimization_objects(*opt_obj_inputs,**opt_obj_kwargs)
         
         if pool.rank == 0:

@@ -56,7 +56,7 @@ B = fom.f.copy()
 # ff = fom.evaluate_fom_fullrhs_wallpert(0*flow.q_sbf)
 X, Y, fields = pp.output_fields(flow,B)
 
-color_map = plt.cm.get_cmap('bwr')
+color_map = plt.get_cmap('bwr')
 
 idx = 1
 vmin = np.min(fields[idx]) 
@@ -128,8 +128,8 @@ ax.set_yscale('log')
 
 #%%
 
-# Phi_pre = U[:,:200]
-Phi_pre = np.load("./trajectories/Phi_pre.npy")
+Phi_pre = U[:,:200]
+# Phi_pre = np.load("./trajectories/Phi_pre.npy")
 
 #%%
 traj_path = "./trajectories/"
@@ -172,7 +172,7 @@ pool = classes.mpi_pool(*pool_inputs,**pool_kwargs)
 
 # Phi_pre = np.load(traj_path + "Phi_pre.npy")
 n = Phi_pre.shape[-1]
-r = 50                  # ROM dimension
+r = 30                  # ROM dimension
 poly_comp = [1,2]       # Model with a linear part and a cubic part
 
 

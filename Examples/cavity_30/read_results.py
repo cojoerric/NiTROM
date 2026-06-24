@@ -71,7 +71,7 @@ B = fom.f.copy()
 
 X, Y, fields = pp.output_fields(flow,flow.q_sbf)
 
-color_map = plt.cm.get_cmap('bwr')
+color_map = plt.get_cmap('bwr')
 
 idx = 2
 vmin = np.min(fields[idx]) 
@@ -91,7 +91,7 @@ ax.set_ylabel('$y$')
 
 plt.tight_layout()
 plt.savefig("./Figures/bflow_Re%d.eps"%Re,format='eps')
-# plt.savefig("./Figures/bflow_Re%d.png"%Re)
+plt.savefig("./Figures/bflow_Re%d.png"%Re)
 
 
 #%%
@@ -104,7 +104,7 @@ fname_deriv = traj_path + "deriv_%03d.npy"
 fname_time = traj_path + "time.npy"
 
 
-amps = np.load(traj_path + "amps_train.npy")
+amps = np.load(traj_path + "amps.npy")
 Phi_pre = np.load(traj_path + "Phi_pre.npy")
 n_traj = len(amps)
 
@@ -134,6 +134,7 @@ ax.set_ylabel('Energy of perturbations')
 
 plt.tight_layout()
 plt.savefig("./Figures/energy_perturbations.eps",format='eps')
+plt.savefig('./Figures/energy_perturbations.png')
 
 #%%
 Phi_pod = np.zeros((n,r))
@@ -171,25 +172,25 @@ pool_inputs = (MPI.COMM_WORLD, n_traj, fname_traj, fname_time)
 pool_kwargs = {'fname_weights':fname_weight,'fname_derivs':fname_deriv}
 pool = classes.mpi_pool(*pool_inputs,**pool_kwargs)
 
-print(pool.weights)
+# print(pool.weights)
 
-weights = pool.weights.copy()
-pool.weights *= pool.n_traj*pool.n_snapshots
+# weights = pool.weights.copy()
+# pool.weights *= pool.n_traj*pool.n_snapshots
 
-print(pool.weights)
-lam = np.logspace(-3,-1,num=20)
-cost_oi = []
-for (count,l) in enumerate(lam):
-    tensors_opinf = opinf_fun.operator_inference(pool,Phi_pod,poly_comp,[0.0,l])
-    point = (Phi_pod,Psi_pod) + tensors_opinf
-    cost_oi.append(cost(*point))
-    print("Computing OpInf with lambda = %1.2e (%d/%d). Cost = %1.7e"%(l,count + 1,len(lam),cost_oi[-1]))
+# print(pool.weights)
+# lam = np.logspace(-3,-1,num=20)
+# cost_oi = []
+# for (count,l) in enumerate(lam):
+#     tensors_opinf = opinf_fun.operator_inference(pool,Phi_pod,poly_comp,[0.0,l])
+#     point = (Phi_pod,Psi_pod) + tensors_opinf
+#     cost_oi.append(cost(*point))
+#     print("Computing OpInf with lambda = %1.2e (%d/%d). Cost = %1.7e"%(l,count + 1,len(lam),cost_oi[-1]))
     
-pool.weights = weights
+# pool.weights = weights
 
-print(pool.weights)
+# print(pool.weights)
 #%%
-tensors_oi = opinf_fun.operator_inference(pool,Phi_pod,poly_comp,[0.0,0.00123])
+# tensors_oi = opinf_fun.operator_inference(pool,Phi_pod,poly_comp,[0.0,0.00123])
 
 #%%
 # plt.figure()
@@ -283,6 +284,7 @@ ax.set_ylabel('Error $e$')
 
 plt.legend()
 plt.tight_layout()
+plt.savefig('Figures/errors.png', dpi=300)
 
 # plt.savefig("./Figures/training_error.eps",format='eps')
     
@@ -406,7 +408,7 @@ plt.tight_layout()
 
 qic = np.random.randn(len(flow.q_sbf))
 qic /= np.linalg.norm(qic)
-dataf, tsavef = tstep.nonlinear_solver_2D(flow,lops,flow.q_sbf + qic,time,nsave)
+dataf, tsavef = tstep.solver_2D(flow,lops,flow.q_sbf + qic,time,nsave,[0,0,1,0,0,0,0,0])
 
 #%%
 dhat = np.fft.rfft(dataf - flow.q_sbf.reshape(-1,1),axis=-1)/len(tsavef)

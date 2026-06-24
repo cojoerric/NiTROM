@@ -51,10 +51,9 @@ def output_fields(flow,q):
 
 def compute_energy(data,q0,tsave):
     
-    N = data.shape[0]
     energy = np.zeros(len(tsave))
     for k in range (len(tsave)):
-        energy[k] = np.dot(data[:,k]-q0,data[:,k]-q0)/N
+        energy[k] = np.dot(data[:,k]-q0,data[:,k]-q0)
         
     return energy
 

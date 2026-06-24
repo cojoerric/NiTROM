@@ -59,13 +59,13 @@ fname_traj = traj_path + "traj_%03d.npy"
 fname_weight = traj_path + "weight_%03d.npy"
 fname_deriv = traj_path + "deriv_%03d.npy"
 fname_time = traj_path + "time.npy"
-amps = np.load(traj_path + "amps_train.npy")
+amps = np.load(traj_path + "amps.npy")
 
 
 Phi_pre = np.load(traj_path + "Phi_pre.npy")
 n_traj = len(amps)
 n = Phi_pre.shape[-1]
-r = 50                  # ROM dimension
+r = 30                  # ROM dimension
 poly_comp = [1,2]       # Model with a linear part and a cubic part
 
 
@@ -100,7 +100,7 @@ Psi_pod = Phi_pod.copy()
 weights = pool.weights.copy()
 pool.weights *= pool.n_traj*pool.n_snapshots
 
-lam = np.logspace(-4,-1,num=30)
+lam = np.logspace(7,8,num=5)
 cost_oi = []
 for (count,l) in enumerate(lam):
     tensors_opinf = opinf_fun.operator_inference(pool,Phi_pod,poly_comp,[0.0,l])

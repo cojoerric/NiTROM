@@ -20,7 +20,8 @@ from pymanopt.tools.diagnostics import check_gradient
 plt.rcParams.update({"font.family":"serif","font.sans-serif":["Computer Modern"],'font.size':18,'text.usetex':True})
 plt.rc('text.latex',preamble=r'\usepackage{amsmath}')
 
-sys.path.append(os.path.abspath("../../OptimizationFunctions/"))
+sys.path.append("../../PyManopt_Functions/")
+sys.path.append("../../Optimization_Functions/")
 
 
 from my_pymanopt_classes import myAdaptiveLineSearcher
@@ -46,15 +47,52 @@ dx = Lx/Nx
 dy = Ly/Ny
 Re = 8300
 
-flow = classes_cavity.flow_parameters(Lx,Ly,Nx,Ny,Re)
+
+flow = classes_cavity.flow_class(Lx,Ly,Nx,Ny,Re)
 
 n = 400
 dt = 1.0/n
 
 lops = classes_cavity.linear_operators_2D(flow,dt)
 flow.q_sbf = np.load("bflow_Re%d_Nx%d_Ny%d.npy"%(Re,Nx,Ny))
+
+
+# Compute the effect of the BC on the flow (then reset the flow class)
+flow.create_side_wall_forcing_profile(0.45,0.55,'ur')
 fom = classes_cavity.fom_class(flow,lops)
-fom.assemble_forcing_profile(0.95, 0.05)
+B = fom.evaluate_full_fom_dynamics(np.zeros(flow.szu + flow.szv),[0,1e-4,1,0,0,0,0,0])/1e-4
+flow.ur *= 0
+fom = classes_cavity.fom_class(flow,lops)
+
+fom.assemble_forcing_profile(0.95,0.05)
+B = fom.f.copy()
+
+#%%
+
+X, Y, fields = pp.output_fields(flow,flow.q_sbf)
+
+color_map = plt.get_cmap('bwr')
+
+idx = 2
+vmin = np.min(fields[idx]) 
+vmax = -vmin
+
+plt.figure()
+plt.contourf(X[idx],Y[idx],np.flipud(fields[idx]),levels=100,cmap=color_map,vmin=vmin,vmax=vmax)
+ax = plt.gca()
+ax.set_aspect('equal')
+plt.colorbar()
+
+ax.set_xlabel('$x$')
+ax.set_ylabel('$y$')
+
+# ax.set_xticks([0,0.25,0.5,0.75,1.0])
+# ax.set_yticks([0,0.25,0.5,0.75,1.0])
+
+plt.tight_layout()
+plt.savefig("./Figures/bflow_Re%d.eps"%Re,format='eps')
+plt.savefig("./Figures/bflow_Re%d.png"%Re)
+
 
 #%%
 
@@ -78,17 +116,33 @@ pool_kwargs = {'fname_weights':fname_weight,'fname_derivs':fname_deriv}
 pool = classes.mpi_pool(*pool_inputs,**pool_kwargs)
 
 
-r = 50               # ROM dimension
+r = 50              # ROM dimension
 poly_comp = [1,2]   # Model with a linear part and a quadratic part
 
+#%%
+
+plt.figure()
+for k in range (pool.my_n_traj):
+    Qk = pool.X[k,]
+    energy_k = np.linalg.norm(Qk,axis=0)**2
+    plt.plot(pool.time,energy_k,'k')
+    
+
+ax = plt.gca()
+ax.set_xlabel('Time $t$')
+ax.set_ylabel('Energy of perturbations')
+
+plt.tight_layout()
+plt.savefig("./Figures/energy_perturbations.eps",format='eps')
+plt.savefig('./Figures/energy_perturbations.png')
 
 #%%
 Phi_pod = np.zeros((n,r))
 Phi_pod[:r,:r] = np.eye(r)
 Psi_pod = Phi_pod.copy()
 
-
-tensors_pod, _ = fom.assemble_petrov_galerkin_tensors(Phi_pre@Phi_pod,Phi_pre@Psi_pod)
+#%%
+tensors_pod, _ = fom.assemble_petrov_galerkin_tensors(Phi_pre@Phi_pod,Phi_pre@Psi_pod,B,[0,0,1,0,0,0,0,0])
 
 #%%
 which_trajs = np.arange(0,pool.my_n_traj,1)
@@ -118,23 +172,25 @@ pool_inputs = (MPI.COMM_WORLD, n_traj, fname_traj, fname_time)
 pool_kwargs = {'fname_weights':fname_weight,'fname_derivs':fname_deriv}
 pool = classes.mpi_pool(*pool_inputs,**pool_kwargs)
 
-print(pool.weights)
+# print(pool.weights)
 
-weights = pool.weights.copy()
-pool.weights *= pool.n_traj*pool.n_snapshots
+# weights = pool.weights.copy()
+# pool.weights *= pool.n_traj*pool.n_snapshots
 
-print(pool.weights)
-lam = np.logspace(3,4,num=20)
-cost_oi = []
-for (count,l) in enumerate(lam):
-    tensors_opinf = opinf_fun.operator_inference(pool,Phi_pod,poly_comp,[0.0,l])
-    point = (Phi_pod,Psi_pod) + tensors_opinf
-    cost_oi.append(cost(*point))
-    print("Computing OpInf with lambda = %1.2e (%d/%d). Cost = %1.7e"%(l,count + 1,len(lam),cost_oi[-1]))
+# print(pool.weights)
+# lam = np.logspace(-3,-1,num=20)
+# cost_oi = []
+# for (count,l) in enumerate(lam):
+#     tensors_opinf = opinf_fun.operator_inference(pool,Phi_pod,poly_comp,[0.0,l])
+#     point = (Phi_pod,Psi_pod) + tensors_opinf
+#     cost_oi.append(cost(*point))
+#     print("Computing OpInf with lambda = %1.2e (%d/%d). Cost = %1.7e"%(l,count + 1,len(lam),cost_oi[-1]))
     
-pool.weights = weights
+# pool.weights = weights
 
-print(pool.weights)
+# print(pool.weights)
+#%%
+# tensors_oi = opinf_fun.operator_inference(pool,Phi_pod,poly_comp,[0.0,0.00123])
 
 #%%
 # plt.figure()
@@ -149,8 +205,8 @@ weights = pool.weights.copy()
 pool.weights *= pool.n_traj*pool.n_snapshots
 
 
-tensors_oi = opinf_fun.operator_inference(pool,Phi_pod,poly_comp,[0,0.01])
-point = (Phi_pod,Psi_pod) + tensors_pod
+tensors_oi = opinf_fun.operator_inference(pool,Phi_pod,poly_comp,[0,1.2e-3])
+point = (Phi_pod,Psi_pod) + tensors_oi
 print(cost(*point))
 
 pool.weights = weights
@@ -166,6 +222,19 @@ A3_nit = np.load("data/A3_nit.npy").reshape((r,r,r))
 
 tensors_nit = (A2_nit,A3_nit)
 
+
+Phi_pod = np.load("data/Phi_pod.npy")
+Psi_pod = Phi_pod.copy()
+A2_pod = np.load("data/A2_pod.npy")
+A3_pod = np.load("data/A3_pod.npy").reshape((r,r,r))
+
+tensors_pod = (A2_pod,A3_pod)
+
+
+# A2_oi = np.load("data/A2_oi.npy")
+# A3_oi = np.load("data/A3_oi.npy").reshape((r,r,r))
+
+# tensors_oi = (A2_oi,A3_oi)
 #%%
 time = pool.time
 u = np.zeros(r)
@@ -179,25 +248,45 @@ for k in range(n_traj):
     zpod = Psi_pod.T@pool.X[k,:,0]
     sol = Phi_pod@(solve_ivp(opt_obj.evaluate_rom_rhs,[0,time[-1]],zpod,'RK45',t_eval=time,args=(u,) + tensors_pod)).y
     epod = np.linalg.norm(sol - pool.X[k,],axis=0)**2/mean_en
-    plt.plot(time,epod,color=cPOD,linestyle=lPOD)
+    
+    if k == 0:
+        plt.plot(time,epod,color=cPOD,linestyle=lPOD,label='POD Gal.')
+    else:
+        plt.plot(time,epod,color=cPOD,linestyle=lPOD)
     
     # OpInf
     zoi = Psi_pod.T@pool.X[k,:,0]
     sol = Phi_pod@(solve_ivp(opt_obj.evaluate_rom_rhs,[0,time[-1]],zoi,'RK45',t_eval=time,args=(u,) + tensors_oi)).y
     eoi = np.linalg.norm(sol - pool.X[k,],axis=0)**2/mean_en
-    plt.plot(time,eoi,color=cOI,linestyle=lOI)
+    
+    if k == 0:
+        plt.plot(time,eoi,color=cOI,linestyle=lOI,label='OpInf')
+    else:
+        plt.plot(time,eoi,color=cOI,linestyle=lOI)
     
     # NiTROM
     znit = Psi_nit.T@pool.X[k,:,0]
     sol = Phi_nit@(solve_ivp(opt_obj.evaluate_rom_rhs,[0,time[-1]],znit,'RK45',t_eval=time,args=(u,) + tensors_nit)).y
     eoi = np.linalg.norm(sol - pool.X[k,],axis=0)**2/mean_en
-    plt.plot(time,eoi,color=cOPT,linestyle=lOPT)
+    if k == 0:
+        plt.plot(time,eoi,color=cOPT,linestyle=lOPT,label='NiTROM')
+    else:
+        plt.plot(time,eoi,color=cOPT,linestyle=lOPT)
     
     
 ax = plt.gca()
 ax.set_yscale('log')
 ax.set_ylim([1e-3,ax.get_ylim()[1]])
 
+
+ax.set_xlabel('Time $t$')
+ax.set_ylabel('Error $e$')
+
+plt.legend()
+plt.tight_layout()
+plt.savefig('Figures/errors.png', dpi=300)
+
+# plt.savefig("./Figures/training_error.eps",format='eps')
     
 #%%
 # np.save("data/A2_oi.npy",tensors_oi[0])
@@ -205,25 +294,26 @@ ax.set_ylim([1e-3,ax.get_ylim()[1]])
 
 #%%
 
-flow.ff = fom.f.copy()
+time = dt*np.arange(0,80*n,1)
+nsave = 20
 
-nn = 400
-dt = 1.0/nn
-freq = 5
-tf = np.arange(0,2*np.pi*freq,0.001)
-time = dt*np.arange(0,40*nn,1)
-nsave = 50
+eps = 0.1
+freq = 1.25
+tf = np.arange(0,2*np.pi/freq,dt)
 
-eps = 0.05
+flow.create_side_wall_forcing_profile(0.45,0.55,'ur')
 fint = scipy.interpolate.interp1d(tf,eps*np.sin(freq*tf),kind='linear',fill_value='extrapolate')
+qic = flow.q_sbf.copy()
+# dataf, tsavef = tstep.solver_2D(flow,lops,qic,time,nsave,[0,1,1,0,0,0,0,0],[1],[fint],[2*np.pi/freq])
 
 
-# qic = np.random.randn(len(flow.q_sbf))
-# qic /= np.linalg.norm(qic)
-# qic = 0.5*flow.ff
+# flow.ur *= 0
+# dataf, tsavef = tstep.solver_2D(flow,lops,qic,time,nsave,[0,1,1,0,0,0,0,0],[1],[fint],[2*np.pi/freq],vol_forcing=B)
+# energy_true = np.linalg.norm(dataf - flow.q_sbf.reshape(-1,1),axis=0)**2
 
-dataf, tsavef = tstep.nonlinear_solver_2D(flow,lops,flow.q_sbf,time,nsave,fint,2*np.pi*freq)
 
+flow.ur *= 0
+dataf, tsavef = tstep.solver_2D(flow,lops,qic,time,nsave,[0,1,1,0,0,0,0,0],[1],[fint],[2*np.pi/freq],vol_forcing=B)
 energy_true = np.linalg.norm(dataf - flow.q_sbf.reshape(-1,1),axis=0)**2
 
 
@@ -231,37 +321,35 @@ energy_true = np.linalg.norm(dataf - flow.q_sbf.reshape(-1,1),axis=0)**2
 
 z0 = np.zeros(r)
 
-
 # NiTROM
-fnit = np.einsum('i,j',Psi_nit.T@Phi_pre.T@flow.ff,eps*np.sin(freq*time))
+fnit = np.einsum('i,j',Psi_nit.T@Phi_pre.T@B,eps*np.sin(freq*time))
 fnit = scipy.interpolate.interp1d(time,fnit,kind='linear',fill_value='extrapolate')
 sol_nit = Phi_nit@(solve_ivp(opt_obj.evaluate_rom_rhs,[0,time[-1]],z0,'RK45',t_eval=time[::nsave],args=(fnit,) + tensors_nit)).y
 energy_nit = np.linalg.norm(sol_nit,axis=0)**2
 
-
 # OpInf
-foi = np.einsum('i,j',Psi_pod.T@Phi_pre.T@flow.ff,eps*np.sin(freq*time))
+foi = np.einsum('i,j',Psi_pod.T@Phi_pre.T@B,eps*np.sin(freq*time))
 foi = scipy.interpolate.interp1d(time,foi,kind='linear',fill_value='extrapolate')
 sol_oi = Phi_pod@(solve_ivp(opt_obj.evaluate_rom_rhs,[0,time[-1]],z0,'RK45',t_eval=time[::nsave],args=(foi,) + tensors_oi)).y
 energy_oi = np.linalg.norm(sol_oi,axis=0)**2
 
-
 # POD
-fpod = np.einsum('i,j',Psi_pod.T@Phi_pre.T@flow.ff,eps*np.sin(freq*time))
+fpod = np.einsum('i,j',Psi_pod.T@Phi_pre.T@B,eps*np.sin(freq*time))
 fpod = scipy.interpolate.interp1d(time,fpod,kind='linear',fill_value='extrapolate')
 sol_pod = Phi_pod@(solve_ivp(opt_obj.evaluate_rom_rhs,[0,time[-1]],z0,'RK45',t_eval=time[::nsave],args=(fpod,) + tensors_pod)).y
 energy_pod = np.linalg.norm(sol_pod,axis=0)**2
 
-
 plt.figure()
 plt.plot(tsavef,energy_true,color='k')
-# plt.plot(tsavef,energy_pod,color=cPOD,linestyle=lPOD)
-# plt.plot(tsavef,energy_oi,color=cOI,linestyle=lOI)
+# plt.plot(tsavef,energy_true2,color='r')
+plt.plot(tsavef,energy_pod,color=cPOD,linestyle=lPOD)
+plt.plot(tsavef,energy_oi,color=cOI,linestyle=lOI)
 plt.plot(tsavef,energy_nit,color=cOPT,linestyle=lOPT)
 
+plt.gca().set_box_aspect(0.3)
 #%%
 
-idx = np.argmin(np.abs(tsavef - 20))
+idx = np.argmin(np.abs(tsavef - 40))
 
 ii = 2
 X, Y, fields = pp.output_fields(flow,dataf[:,idx] - flow.q_sbf)
@@ -320,7 +408,7 @@ plt.tight_layout()
 
 qic = np.random.randn(len(flow.q_sbf))
 qic /= np.linalg.norm(qic)
-dataf, tsavef = tstep.nonlinear_solver_2D(flow,lops,flow.q_sbf + qic,time,nsave)
+dataf, tsavef = tstep.solver_2D(flow,lops,flow.q_sbf + qic,time,nsave,[0,0,1,0,0,0,0,0])
 
 #%%
 dhat = np.fft.rfft(dataf - flow.q_sbf.reshape(-1,1),axis=-1)/len(tsavef)
@@ -332,5 +420,21 @@ en = np.linalg.norm(dhat,axis=0)**2
 plt.figure()
 plt.stem(freqvec,en)
 plt.gca().set_yscale('log')
+
+#%%
+
+xhat = np.fft.rfft(pool.X[0,],axis=-1)
+en = np.linalg.norm(xhat,axis=0)**2
+freqs = (2*np.pi/40)*np.arange(len(en))
+
+
+plt.figure()
+plt.stem(freqs,en,'o')
+
+ax = plt.gca()
+ax.set_yscale('log')
+
+
+
 
 

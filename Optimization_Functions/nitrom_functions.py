@@ -32,7 +32,7 @@ def create_objective_and_gradient(manifold,opt_obj,mpi_pool,fom):
 
         
         J = 0.0
-        for k in range (mpi_pool.my_n_traj): 
+        for k in range (opt_obj.my_n_traj): 
 
             # Integrate the reduced-order model from time t = 0 to the final time 
             # specified by the last snapshot in the training trajectory
@@ -86,7 +86,7 @@ def create_objective_and_gradient(manifold,opt_obj,mpi_pool,fom):
         tlg, wlg = np.polynomial.legendre.leggauss(opt_obj.leggauss_deg)
         wlg = np.asarray(wlg)
         
-        for k in range (mpi_pool.my_n_traj):
+        for k in range (opt_obj.my_n_traj):
 
             z0 = Psi.T@opt_obj.X[k,:,0]
             u = Psi.T@opt_obj.F[:,k]
