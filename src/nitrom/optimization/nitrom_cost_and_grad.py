@@ -38,7 +38,7 @@ class NiTROMCostAndGrad:
             dt=(self.opt_obj.time[1] - self.opt_obj.time[0]) / 100,
             t_eval=self.opt_obj.time,
             method="rk4",
-            kwargs={"external_forcing": self.opt_obj.forcing_fns},
+            external_forcing=self.opt_obj.forcing_fns,
         )
         Yhat = latent_space_model.evaluate_output(self.rom_model.projection.decode(Z))
         Y = latent_space_model.evaluate_output(self.opt_obj.X)

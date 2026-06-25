@@ -23,7 +23,7 @@ class Projection(metaclass=abc.ABCMeta):
     def ambient_space_dimension(self) -> int:
         """Ambient space dimension."""
         return self._n
-    
+
     @property
     def latent_space_dimension(self) -> int:
         """Ambient space dimension."""
@@ -109,5 +109,30 @@ class Projection(metaclass=abc.ABCMeta):
         :param v: upstream adjoint seed of shape matching the decoder output
         :type v: torch.Tensor
         :rtype: tuple[torch.Tensor, ...]
+        """
+        ...
+
+    @abc.abstractmethod
+    def vjp_decode_state(
+        self, z: torch.Tensor, v: torch.Tensor, *args, **kwargs
+    ) -> torch.Tensor:
+        r"""
+        VJP of the decoder with respect to the latent **state** :math:`z`
+        (not the parameters):
+
+        .. math::
+
+            \left(\frac{\partial\,\text{decode}(z)}{\partial z}\right)^\top v.
+
+        This is the decoder Jacobian-transpose applied to a full-space
+        cotangent, used to map an ambient-space adjoint seed back into the
+        latent space (e.g. the measurement source of an adjoint solve).
+
+        :param z: reduced-space vector of shape ``(r,)`` or ``(m, r)``
+        :type z: torch.Tensor
+        :param v: full-space cotangent of shape ``(N,)`` or ``(m, N)``
+        :type v: torch.Tensor
+        :returns: latent-space vector of shape ``(r,)`` or ``(m, r)``
+        :rtype: torch.Tensor
         """
         ...

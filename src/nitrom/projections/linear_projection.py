@@ -21,8 +21,11 @@ class LinearProjection(Projection):
         Phi = bases[0]
         n, r = Phi.shape
         super().__init__(
-            n, r, param_names=["Phi", "Psi"],
-            device=Phi.device, dtype=Phi.dtype,
+            n,
+            r,
+            param_names=["Phi", "Psi"],
+            device=Phi.device,
+            dtype=Phi.dtype,
         )
         self.Phi = bases[0]
         self.Psi = bases[1]
@@ -118,14 +121,37 @@ class LinearProjection(Projection):
         """
         if v.ndim == 1:
             # Unbatched: v is (N,), z is (r,)
-            w = torch.outer(v, self.S @ z)                      # (N, r)
+            w = torch.outer(v, self.S @ z)  # (N, r)
         else:
             # Batched: v is (m, N), z is (m, r) -> v.T @ (z @ S.T) -> (N, r)
-            w = v.T @ (z @ self.S.T)                             # (N, r)
+            w = v.T @ (z @ self.S.T)  # (N, r)
         # grad_Phi = w - Psi @ S^T @ Phi^T @ w
-        PhiTw = self.Phi.T @ w                                   # (r, r)
-        grad_Phi = w - self.Psi @ (self.S.T @ PhiTw)             # (N, r)
+        PhiTw = self.Phi.T @ w  # (r, r)
+        grad_Phi = w - self.Psi @ (self.S.T @ PhiTw)  # (N, r)
         # grad_Psi = -Phi @ w^T @ Phi @ S
-        wTPhi = w.T @ self.Phi                                   # (r, r)
-        grad_Psi = -self.Phi @ (wTPhi @ self.S)                  # (N, r)
+        wTPhi = w.T @ self.Phi  # (r, r)
+        grad_Psi = -self.Phi @ (wTPhi @ self.S)  # (N, r)
         return (grad_Phi, grad_Psi)
+
+    def vjp_decode_state(self, z: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+        r"""
+        VJP of the decoder :math:`\hat{q} = \Phi\, S\, z` with respect to the
+        latent state :math:`z`.  The decoder is linear in :math:`z`, so the
+        Jacobian is the constant :math:`\Phi S` and
+
+        .. math::
+
+            \left(\frac{\partial \hat{q}}{\partial z}\right)^\top v
+                = S^\top \Phi^\top v.
+
+        :param z: reduced-space vector of shape ``(r,)`` or ``(m, r)`` (unused;
+            the Jacobian does not depend on the state)
+        :type z: torch.Tensor
+        :param v: full-space cotangent of shape ``(N,)`` or ``(m, N)``
+        :type v: torch.Tensor
+        :returns: latent-space vector of shape ``(r,)`` or ``(m, r)``
+        :rtype: torch.Tensor
+        """
+        if v.ndim == 1:
+            return self.S.T @ (self.Phi.T @ v)  # (r,)
+        return (v @ self.Phi) @ self.S  # (m, r) = (S^T Phi^T v)^(j)

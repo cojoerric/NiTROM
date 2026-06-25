@@ -116,6 +116,9 @@ class TestProjectionAbstract:
             def vjp_decode(self, z, v, *args, **kwargs):
                 return ()
 
+            def vjp_decode_state(self, z, v, *args, **kwargs):
+                return z
+
         proj = Complete(n=4, r=4, param_names=[])
         x = torch.randn(4)
         assert proj.encode(x).shape == x.shape

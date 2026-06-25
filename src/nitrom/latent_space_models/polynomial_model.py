@@ -48,6 +48,11 @@ class PolynomialModel(Model):
         forcing_exists = forcing_config is not None and forcing_config.get(
             "forcing_exists", False
         )
+        # An optional fixed input operator may be supplied via
+        # ``forcing_config["B"]``; B remains a parameter but is flagged
+        # non-learnable so that its gradient is zeroed.
+        B_fixed = forcing_config.get("B") if forcing_config else None
+
         param_names = [f"A_{k}" for k in poly_comp]
         if forcing_exists:
             param_names.append("B")
@@ -57,18 +62,24 @@ class PolynomialModel(Model):
         self.thresh = instability_threshold
         self.forcing_exists = forcing_exists
 
-        # Initialize tensors to zero if not provided
+        # Initialize tensors (zero, or the fixed B) if not provided
         if tensors is None:
             tensors = [
                 torch.zeros((r,) * (k + 1), device=self.device, dtype=self.dtype)
                 for k in poly_comp
             ]
-            if self.forcing_exists:
-                m = forcing_config["m"]
-                tensors.append(
-                    torch.zeros((r, m), device=self.device, dtype=self.dtype)
-                )
+            if forcing_exists:
+                if B_fixed is not None:
+                    tensors.append(B_fixed.to(device=self.device, dtype=self.dtype))
+                else:
+                    m = forcing_config["m"]
+                    tensors.append(
+                        torch.zeros((r, m), device=self.device, dtype=self.dtype)
+                    )
         self.update_params(tensors)
+        # A supplied fixed B always overrides any value from tensors.
+        if forcing_exists and B_fixed is not None:
+            self.B = B_fixed.to(device=self.device, dtype=self.dtype)
         self._generate_einsum_subscripts()
 
     def get_params(self) -> list[torch.Tensor]:

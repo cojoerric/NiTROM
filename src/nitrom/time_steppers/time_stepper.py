@@ -13,6 +13,7 @@ def evolve(
     dt: float,
     method: Literal["rk4", "rk2"] = "rk4",
     *args,
+    **kwargs,
 ) -> torch.Tensor:
     r"""
     Advance the state by one time step using an explicit Runge-Kutta method.
@@ -33,18 +34,20 @@ def evolve(
         ``"rk2"`` (Heun's method)
     :type method: str
     :param args: extra positional arguments forwarded to *f*
+    :param kwargs: extra keyword arguments forwarded to *f* (e.g.
+        ``external_forcing``)
     :returns: state at time :math:`t + \Delta t`
     :rtype: torch.Tensor
     """
     if method == "rk4":
-        k1 = f(t, x, *args)
-        k2 = f(t + dt / 2, x + dt / 2 * k1, *args)
-        k3 = f(t + dt / 2, x + dt / 2 * k2, *args)
-        k4 = f(t + dt, x + dt * k3, *args)
+        k1 = f(t, x, *args, **kwargs)
+        k2 = f(t + dt / 2, x + dt / 2 * k1, *args, **kwargs)
+        k3 = f(t + dt / 2, x + dt / 2 * k2, *args, **kwargs)
+        k4 = f(t + dt, x + dt * k3, *args, **kwargs)
         x_next = x + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
     elif method == "rk2":
-        k1 = f(t, x, *args)
-        k2 = f(t + dt, x + dt * k1, *args)
+        k1 = f(t, x, *args, **kwargs)
+        k2 = f(t + dt, x + dt * k1, *args, **kwargs)
         x_next = x + dt / 2 * (k1 + k2)
     return x_next
 
@@ -57,6 +60,7 @@ def solve_ivp(
     t_eval: torch.Tensor,
     method: Literal["rk4", "rk2"] = "rk4",
     *args,
+    **kwargs,
 ) -> torch.Tensor:
     r"""
     Integrate an ODE initial-value problem using the specified Runge-Kutta method and return the
@@ -80,6 +84,8 @@ def solve_ivp(
     :param t_eval: times at which to return the solution, shape ``(n_eval,)``
     :type t_eval: torch.Tensor
     :param args: extra positional arguments forwarded to *f*
+    :param kwargs: extra keyword arguments forwarded to *f* (e.g.
+        ``external_forcing``)
     :returns: solution tensor of shape ``(n, n_eval)`` or ``(B, n, n_eval)``
     :rtype: torch.Tensor
     """
@@ -114,7 +120,7 @@ def solve_ivp(
 
     for i in range(1, len(tsim)):
         t = tsim[i - 1]
-        x = evolve(f, t, x, dt, method, *args)
+        x = evolve(f, t, x, dt, method, *args, **kwargs)
         if i % save_every == 0:
             if batched:
                 X[:, :, i // save_every] = x

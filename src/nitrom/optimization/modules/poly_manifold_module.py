@@ -2,9 +2,12 @@ import torch
 import torch.nn as nn
 
 from nitrom.projections.polynomial_projection import PolynomialProjection
+from nitrom.training_data import TrainingData
+
+from .base import InferenceModule
 
 
-class PolyManifoldInfModule(nn.Module):
+class PolyManifoldInfModule(InferenceModule):
     r"""
     Polynomial manifold inference module backed by
     :class:`PolynomialProjection`.
@@ -28,9 +31,9 @@ class PolyManifoldInfModule(nn.Module):
     The bases :math:`\Phi` and :math:`\Psi` are **fixed**; only the
     nonlinear tensors :math:`A_k` are learned.
 
-    :param opt_obj: training data with ``X`` of shape
+    :param training_data: training data with ``X`` of shape
         ``(ntraj, N, nt)`` and ``weights`` of shape ``(ntraj,)``
-    :type opt_obj: TrainingPool or TrainingData
+    :type training_data: TrainingData
     :param nonlin_poly_comp: nonlinear polynomial degrees in ascending
         order, e.g. ``[2, 3]``
     :type nonlin_poly_comp: list[int]
@@ -49,7 +52,7 @@ class PolyManifoldInfModule(nn.Module):
 
     def __init__(
         self,
-        opt_obj,
+        training_data: TrainingData,
         nonlin_poly_comp: list[int],
         Phi: torch.Tensor,
         Psi: torch.Tensor | None = None,
@@ -69,14 +72,14 @@ class PolyManifoldInfModule(nn.Module):
         self.reg = reg
 
         # Store full-space data: X of shape (ntraj, N, nt)
-        self.X = opt_obj.X
+        self.X = training_data.X
 
         ntraj, _, nt = self.X.shape
         self.ntraj = ntraj
         self.nt = nt
 
         # Weight matrix
-        W = (1.0 / opt_obj.weights).repeat_interleave(nt)
+        W = (1.0 / training_data.weights).repeat_interleave(nt)
         self.W = torch.diag(W)
 
         # Precompute encoded data: Z of shape (ntraj, r, nt)

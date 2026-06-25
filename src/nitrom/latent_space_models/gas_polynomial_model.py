@@ -14,7 +14,7 @@ class GasPolynomialModel(Model):
 
     .. math::
 
-        A = \bigl((K - K^\top) - R\,R^\top\bigr)\,\tilde{Q},
+        A = \bigl((K - K^\top) - R^{-1}\,R^{-\top}\bigr)\,\tilde{Q},
         \qquad
         H_{ijk} = (S_{ilk} - S_{lik})\,\tilde{Q}_{lj},
 
@@ -62,10 +62,13 @@ class GasPolynomialModel(Model):
             param_names.extend(["Q", "S"])
             gas_shapes.extend([(r, r), (r, r, r)])
 
-        # Track forcing
+        # Track forcing.  An optional fixed input operator may be supplied via
+        # ``forcing_config["B"]``; B stays a parameter but is flagged
+        # non-learnable so that its gradient is zeroed.
         forcing_exists = forcing_config is not None and forcing_config.get(
             "forcing_exists", False
         )
+        B_fixed = forcing_config.get("B") if forcing_config else None
         if forcing_exists:
             param_names.append("B")
 
@@ -78,17 +81,24 @@ class GasPolynomialModel(Model):
             for name, tensor in zip(param_names, gas_params):
                 setattr(self, name, tensor.to(device=self.device, dtype=self.dtype))
         else:
-            # Initialize GAS params randomly
-            for name, shape in zip(
-                param_names[:-1] if forcing_exists else param_names, gas_shapes
-            ):
+            # Initialize the GAS parameters randomly (K, R, Q, S; B handled below)
+            gas_param_names = [name for name in param_names if name != "B"]
+            for name, shape in zip(gas_param_names, gas_shapes, strict=True):
                 setattr(
                     self, name, torch.randn(shape, device=self.device, dtype=self.dtype)
                 )
-            # Initialize B to zeros
+            # Initialize B (fixed value if supplied, else zeros)
             if forcing_exists:
                 m = forcing_config["m"]
-                self.B = torch.zeros((r, m), device=self.device, dtype=self.dtype)
+                self.B = (
+                    B_fixed.to(device=self.device, dtype=self.dtype)
+                    if B_fixed is not None
+                    else torch.zeros((r, m), device=self.device, dtype=self.dtype)
+                )
+
+        # A supplied fixed B always overrides any value from gas_params.
+        if forcing_exists and B_fixed is not None:
+            self.B = B_fixed.to(device=self.device, dtype=self.dtype)
 
         # Assemble physical tensors and create the inner PolynomialModel
         tensors = self.assemble_gas_tensors()
@@ -122,7 +132,8 @@ class GasPolynomialModel(Model):
 
         if 1 in self.poly_comp:
             idx = self.poly_comp.index(1)
-            tensors[idx] = ((self.K - self.K.T) - self.R @ self.R.T) @ Qtil
+            Rinv = torch.linalg.inv(self.R)
+            tensors[idx] = ((self.K - self.K.T) - Rinv @ Rinv.T) @ Qtil
 
         if 2 in self.poly_comp:
             idx = self.poly_comp.index(2)
@@ -148,6 +159,117 @@ class GasPolynomialModel(Model):
         for name, tensor in zip(self.param_names, params):
             setattr(self, name, tensor)
         self.model.update_params(self.assemble_gas_tensors())
+
+    def retract_general_tensors_to_gas_tensors(
+        self,
+        tensors: list[torch.Tensor],
+        margin: float = 1e-3,
+    ) -> None:
+        r"""
+        Retract general polynomial operator tensors ``[A, H]`` onto the GAS
+        parameter manifold and **set** the model's GAS parameters.
+
+        ``A`` is first shifted, if necessary, into the open left-half plane,
+        :math:`A \leftarrow A - \alpha I` with
+
+        .. math::
+
+            \alpha = \begin{cases}
+                0, & \max_i \mathrm{Re}\,\lambda_i(A) < 0,\\[2pt]
+                \max_i \mathrm{Re}\,\lambda_i(A) + \texttt{margin}, &
+                    \text{otherwise,}
+            \end{cases}
+
+        so that the (stabilized) ``A`` is Hurwitz.  The Lyapunov equation
+
+        .. math::
+
+            A^\top P + P A = -I
+
+        is then solved for the SPD :math:`P`, and the GAS parameters are built
+        from the skew/symmetric split of :math:`A P^{-1} = N - M`:
+
+        .. math::
+
+            N = \mathrm{skew}(A P^{-1}), \quad
+            M = -\mathrm{sym}(A P^{-1}) = \tfrac12 P^{-2} \succ 0, \\
+            K = \tfrac12 N, \quad
+            R = \mathrm{chol}(M)^{-1}, \quad
+            Q = \mathrm{chol}(P^{-1})^\top, \quad
+            S_{:,:,k} = \tfrac12 (H_{:,:,k} - H_{:,:,k}^\top),
+
+        which give :math:`K - K^\top = N`, :math:`R^{-1}R^{-\top} = M` and
+        :math:`Q^{-1}Q^{-\top} = P`.  The reconstruction is then exact,
+
+        .. math::
+
+            \bigl((K - K^\top) - R^{-1}R^{-\top}\bigr)\,Q^{-1}Q^{-\top}
+                = (N - M)\,P = A P^{-1} P = A.
+
+        Using the Lyapunov solution :math:`P` (rather than :math:`P = I`)
+        guarantees :math:`M` is SPD for *any* Hurwitz ``A``, so spectral
+        stability alone suffices -- :math:`\mathrm{sym}(A)` need not be
+        negative definite.  Any forcing operator ``B`` is left unchanged.
+
+        :param tensors: ``[A, H]`` with ``A`` of shape ``(r, r)`` and ``H``
+            of shape ``(r, r, r)``
+        :type tensors: list[torch.Tensor]
+        :param margin: stability margin by which the spectrum is pushed into
+            the left-half plane when ``A`` is not already strictly stable
+        :type margin: float
+        :raises RuntimeError: if the assembled ``[K, R, Q, S]`` fail to
+            reconstruct the (stabilized) ``A``
+        """
+        from scipy.linalg import solve_continuous_lyapunov
+
+        A = tensors[0].to(device=self.device, dtype=self.dtype)
+        H = tensors[1].to(device=self.device, dtype=self.dtype)
+        r = A.shape[0]
+        eye = torch.eye(r, device=self.device, dtype=self.dtype)
+
+        # Shift the spectrum into the open left-half plane if A is not already
+        # strictly stable (leave it unchanged otherwise).
+        abscissa = float(torch.linalg.eigvals(A).real.max())
+        shift = abscissa + margin if abscissa >= 0.0 else 0.0
+        A = A - shift * eye
+
+        # Solve A^T P + P A = -I for the SPD Lyapunov solution P.
+        P_np = solve_continuous_lyapunov(
+            A.T.detach().cpu().numpy(), (-eye).detach().cpu().numpy()
+        )
+        P = torch.as_tensor(P_np, device=self.device, dtype=self.dtype)
+        P = 0.5 * (P + P.T)  # symmetrize against round-off
+        Pinv = torch.linalg.inv(P)
+
+        # Split A P^{-1} = N - M with N skew and M = -sym(A P^{-1}) = P^{-2}/2 SPD.
+        APinv = A @ Pinv
+        N = 0.5 * (APinv - APinv.T)
+        M = -0.5 * (APinv + APinv.T)
+
+        # K = N / 2 (so K - K^T = N);  R^{-1}R^{-T} = M;  Q^{-1}Q^{-T} = P.
+        K = 0.5 * N
+        R = torch.linalg.inv(torch.linalg.cholesky(M))
+        Q = torch.linalg.cholesky(Pinv).T
+
+        # S_{:,:,k} = skew(H_{:,:,k}): transpose the leading (i, j) axes.
+        S = 0.5 * (H - H.permute(1, 0, 2))
+
+        # Verify the reconstruction A = ((K - K^T) - R^{-1}R^{-T}) Q^{-1}Q^{-T}.
+        Qinv = torch.linalg.inv(Q)
+        Rinv = torch.linalg.inv(R)
+        A_recon = ((K - K.T) - Rinv @ Rinv.T) @ (Qinv @ Qinv.T)
+        err = torch.linalg.norm(A_recon - A) / torch.linalg.norm(A)
+        if err > 1e-6:
+            raise RuntimeError(
+                f"GAS retraction failed to reconstruct A (rel. error {err:.2e})."
+            )
+
+        # Set the GAS parameters (preserving B and any other current params).
+        retracted = {"K": K, "R": R, "Q": Q, "S": S}
+        params = [
+            retracted.get(name, getattr(self, name)) for name in self.param_names
+        ]
+        self.update_params(params)
 
     def evaluate_rhs(self, t: float, z: torch.Tensor, **kwargs) -> torch.Tensor:
         """Delegate to the inner :class:`PolynomialModel`."""
@@ -188,17 +310,23 @@ class GasPolynomialModel(Model):
 
         grads = []
 
-        # grad_K, grad_R (from linear term A = ((K - K^T) - R R^T) @ Qtil)
+        # grad_K, grad_R (from linear term A = ((K - K^T) - R^{-1} R^{-T}) @ Qtil)
+        Rinv = torch.linalg.inv(self.R) if 1 in self.poly_comp else None
         if 1 in self.poly_comp:
+            sym = grad_A @ Qtil + Qtil @ grad_A.T
             grad_K = grad_A @ Qtil - Qtil @ grad_A.T
-            grad_R = -(grad_A @ Qtil + Qtil @ grad_A.T) @ self.R
+            # M = R^{-1} R^{-T}; chain through M = P P^T and P = R^{-1}.
+            grad_R = Rinv.T @ sym @ Rinv @ Rinv.T
             grads.extend([grad_K, grad_R])
 
         # grad_Q, grad_S from H_{ijk} = (S_{ilk} - S_{lik}) Qtil_{lj}
         if 2 in self.poly_comp:
             # grad_Qtil from linear term: A_pre^T @ grad_A
-            A_pre = (self.K - self.K.T) - self.R @ self.R.T
-            grad_Qtil = A_pre.T @ grad_A if grad_A is not None else torch.zeros_like(Qtil)
+            if grad_A is not None:
+                A_pre = (self.K - self.K.T) - Rinv @ Rinv.T
+                grad_Qtil = A_pre.T @ grad_A
+            else:
+                grad_Qtil = torch.zeros_like(Qtil)
             # grad_Qtil_{lj} from quadratic: Σ_{ik} grad_H_{ijk} (S_{ilk} - S_{lik})
             grad_Qtil += (
                 torch.einsum("jik,jlk->il", self.S, grad_H)

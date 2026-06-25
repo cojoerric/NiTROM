@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import torch
 
-from nitrom.optimization.operator_inference.opinf_module import OpInfModule
+from nitrom.optimization import OpInfModule
 
 
 # ---------------------------------------------------------------------------

@@ -1,11 +1,14 @@
 import torch
 import torch.nn as nn
 
-from nitrom.latent_space_models.polynomial_model import PolynomialModel
 from nitrom.latent_space_models.gas_polynomial_model import GasPolynomialModel
+from nitrom.latent_space_models.polynomial_model import PolynomialModel
+from nitrom.training_data import TrainingData
+
+from .base import InferenceModule
 
 
-class OpInfModule(nn.Module):
+class OpInfModule(InferenceModule):
     r"""
     Operator-inference module backed by :class:`PolynomialModel` or
     :class:`GasPolynomialModel`.
@@ -20,8 +23,8 @@ class OpInfModule(nn.Module):
     where :math:`z = \Phi^\top x`, :math:`\dot{z} = \Phi^\top \dot{x}`,
     and :math:`f` is evaluated by the underlying model.
 
-    :param opt_obj: training data with ``X``, ``dX``, ``weights``, ``times``
-    :type opt_obj: TrainingPool
+    :param training_data: training data with ``X``, ``dX``, ``weights``, ``time``
+    :type training_data: TrainingData
     :param poly_comp: polynomial degrees, e.g. ``[1, 2]``
     :type poly_comp: list[int]
     :param Phi: trial basis of shape ``(N, r)``
@@ -42,7 +45,7 @@ class OpInfModule(nn.Module):
 
     def __init__(
         self,
-        opt_obj,
+        training_data: TrainingData,
         poly_comp: list[int],
         Phi: torch.Tensor,
         reg: float = 0.0,
@@ -55,26 +58,38 @@ class OpInfModule(nn.Module):
         self.poly_comp = poly_comp
         self.reg = reg
         self.gas_flag = gas_flag
-        self.forcing_config = forcing_config
-        self.forcing_exists = forcing_config is not None and forcing_config.get(
-            "forcing_exists", False
-        )
-        self.m = forcing_config is not None and forcing_config.get("m", None)
 
         r = Phi.shape[-1]
         dev = Phi.device
         dtype = Phi.dtype
 
+        # If a full-order input matrix ``B_fom`` is supplied, project it onto
+        # the basis to obtain a fixed (non-trainable) reduced input operator
+        # B = Phi^T B_fom.
+        if forcing_config is not None and forcing_config.get("B_fom") is not None:
+            B_fom = forcing_config["B_fom"].to(device=dev, dtype=dtype)
+            forcing_config = {
+                **forcing_config,
+                "B": Phi.T @ B_fom,
+                "m": B_fom.shape[1],
+            }
+
+        self.forcing_config = forcing_config
+        self.forcing_exists = forcing_config is not None and forcing_config.get(
+            "forcing_exists", False
+        )
+        self.m = forcing_config.get("m") if forcing_config is not None else None
+
         # Precompute projected data: Z, dZ of shape (ntraj, r, nt)
-        self.Z = torch.einsum("ij,kil->kjl", Phi, opt_obj.X)
-        self.dZ = torch.einsum("ij,kil->kjl", Phi, opt_obj.dX)
+        self.Z = torch.einsum("ij,kil->kjl", Phi, training_data.X)
+        self.dZ = torch.einsum("ij,kil->kjl", Phi, training_data.dX)
 
         ntraj, _, nt = self.Z.shape
         self.ntraj = ntraj
         self.nt = nt
 
         # Weight matrix
-        W = (1 / opt_obj.weights).repeat_interleave(nt)
+        W = (1 / training_data.weights).repeat_interleave(nt)
         self.W = torch.diag(W)
 
         # Create the underlying model
@@ -92,8 +107,8 @@ class OpInfModule(nn.Module):
             )
 
         # Store forcing callables and time grid
-        self.forcing_fns = getattr(opt_obj, "forcing_fns", None)
-        self.time = getattr(opt_obj, "time", None)
+        self.forcing_fns = getattr(training_data, "forcing_fns", None)
+        self.time = getattr(training_data, "time", None)
 
         # Register nn.Parameters mirroring the model's params
         for name in self.rom.param_names:
@@ -101,6 +116,48 @@ class OpInfModule(nn.Module):
                 name,
                 nn.Parameter(getattr(self.rom, name).clone()),
             )
+
+        # Per-parameter learnability (all trainable by default).  Non-learnable
+        # parameters have their gradient zeroed in :meth:`gradient`.
+        self.is_learnable = dict.fromkeys(self.rom.param_names, True)
+
+    def set_unlearnable(self, *names: str) -> None:
+        """
+        Mark one or more parameters as non-learnable.
+
+        All parameters are learnable by default.  A non-learnable parameter
+        keeps its current value during training: its gradient is zeroed both
+        in the model VJP and in the regularization term, so the optimizer
+        never updates it.  Typical use is to freeze the input operator,
+        ``model.set_unlearnable("B")``.
+
+        :param names: parameter names, each in :attr:`rom.param_names`
+        :type names: str
+        :raises KeyError: if a name is not a parameter of the underlying ROM
+        """
+        self._set_learnable(names, False)
+
+    def set_learnable(self, *names: str) -> None:
+        """
+        Mark one or more parameters as learnable (the default state).
+
+        Reverses :meth:`set_unlearnable`, so the optimizer updates these
+        parameters again.
+
+        :param names: parameter names, each in :attr:`rom.param_names`
+        :type names: str
+        :raises KeyError: if a name is not a parameter of the underlying ROM
+        """
+        self._set_learnable(names, True)
+
+    def _set_learnable(self, names: tuple[str, ...], value: bool) -> None:
+        for name in names:
+            if name not in self.is_learnable:
+                raise KeyError(
+                    f"Unknown parameter '{name}'; expected one of "
+                    f"{list(self.is_learnable)}."
+                )
+            self.is_learnable[name] = value
 
     def _sync_to_rom(self) -> None:
         """Push current nn.Parameters into the underlying ROM."""
@@ -201,5 +258,11 @@ class OpInfModule(nn.Module):
         params = self.rom.get_params()
         for i in range(len(grads)):
             grads[i] = grads[i] + 2.0 * self.reg * params[i]
+
+        # Zero the gradient of any non-learnable parameter so the optimizer
+        # leaves it fixed at its current value.
+        for i, name in enumerate(self.rom.param_names):
+            if not self.is_learnable[name]:
+                grads[i] = torch.zeros_like(grads[i])
 
         return grads

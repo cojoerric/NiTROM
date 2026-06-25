@@ -1,25 +1,50 @@
-import numpy as np
-import scipy.linalg as sciplin
+import torch
 
 
 class full_order_model:
-    def __init__(self, A2, A3, B, C):
+    def __init__(self, A2, A3, B, C, device="cpu", dtype=torch.float32):
 
         self.A2 = A2  # Linear tensor (i.e., a matrix)
         self.A3 = A3  # Quadratic tesors (i.e., third-order)
         self.B = B  # The input matrix
         self.C = C  # The output matrix
+        self.device = device
+        self.dtype = dtype
 
-    def evaluate_fom_dynamics(self, t, q, f):
+    def evaluate_fom_dynamics(self, t, q, u):
         """
         Evaluate the FOM dynamics: dx/dt = Ax + H:xx^T + fu(t),
         where A is a second-order tensor, H a third-order tensor and
         fu is an scipy interpolator for the input
         """
-        return self.A2 @ q + np.einsum("ijk,j,k", self.A3, q, q) + f(t)
+
+        f = u.detach() if hasattr(u, "__len__") == True else u(t)
+        if torch.linalg.vector_norm(q) >= 1e4:
+            vec = 0 * q
+        else:
+            vec = self.A2 @ q + torch.einsum("ijk,j,k", self.A3, q, q) + f
+
+        return vec
+
+    def evaluate_fom_adjoint(self, t, q, fQ):
+        """
+        Evaluate the adjoint of the FOM dynamics, where fQ is a
+        scipy interpolator for the base flow
+        """
+
+        if torch.linalg.vector_norm(q) >= 1e4:
+            vec = 0 * q
+        else:
+            vec = (
+                self.A2
+                + torch.einsum("ijk,j", self.A3, fQ(t))
+                + torch.einsum("ijk,k", self.A3, fQ(t))
+            ).T @ q
+
+        return vec
 
     def compute_output(self, q):
-        return self.C @ q
+        return torch.matmul(self.C, q)
 
     def compute_output_derivative(self, q):
         return self.C
@@ -31,13 +56,13 @@ class full_order_model:
         """
 
         n, r = Phi.shape
-        PhiF = Phi @ sciplin.inv(Psi.T @ Phi)
+        PhiF = Phi @ torch.linalg.inv(Psi.T @ Phi)
 
         A2r = Psi.T @ self.A2 @ PhiF
-        A3r = np.zeros((r, r, r))
+        A3r = torch.zeros((r, r, r), device=self.device, dtype=self.dtype)
         for i in range(r):
             for j in range(r):
-                A3r[:, i, j] = Psi.T @ np.einsum(
+                A3r[:, i, j] = Psi.T @ torch.einsum(
                     "kij,i,j", self.A3, PhiF[:, i], PhiF[:, j]
                 )
 

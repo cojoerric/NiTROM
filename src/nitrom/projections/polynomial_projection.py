@@ -1,5 +1,7 @@
-import torch
+from itertools import combinations
 from string import ascii_lowercase
+
+import torch
 
 from .projection import Projection
 
@@ -31,15 +33,17 @@ class PolynomialProjection(Projection):
     def __init__(self, nonlin_poly_comp: list[int], tensors: list[torch.Tensor]):
         if nonlin_poly_comp != sorted(nonlin_poly_comp):
             raise ValueError(
-                f"nonlin_poly_comp must be in ascending order, "
-                f"got {nonlin_poly_comp}"
+                f"nonlin_poly_comp must be in ascending order, got {nonlin_poly_comp}"
             )
         param_names = ["Phi", "Psi"] + [f"A{k}" for k in nonlin_poly_comp]
         Phi = tensors[0]
         n, r = Phi.shape
         super().__init__(
-            n, r, param_names=param_names,
-            device=Phi.device, dtype=Phi.dtype,
+            n,
+            r,
+            param_names=param_names,
+            device=Phi.device,
+            dtype=Phi.dtype,
         )
         self.nonlin_poly_comp = nonlin_poly_comp
         self._generate_einsum_subscripts()
@@ -134,9 +138,7 @@ class PolynomialProjection(Projection):
 
         return q
 
-    def vjp_encode(
-        self, q: torch.Tensor, v: torch.Tensor
-    ) -> tuple:
+    def vjp_encode(self, q: torch.Tensor, v: torch.Tensor) -> tuple:
         r"""
         VJP of the encoder :math:`z = \Psi^\top q` with respect to all
         parameters.  The encoder does not depend on :math:`A_k`, so those
@@ -159,9 +161,7 @@ class PolynomialProjection(Projection):
             grads += (torch.zeros_like(getattr(self, f"A{k}")),)
         return grads
 
-    def vjp_decode(
-        self, z: torch.Tensor, v: torch.Tensor
-    ) -> tuple:
+    def vjp_decode(self, z: torch.Tensor, v: torch.Tensor) -> tuple:
         r"""
         VJP of the decoder with respect to all parameters.
 
@@ -209,11 +209,11 @@ class PolynomialProjection(Projection):
 
         # Projected adjoint: w = P^T v = v - Psi S^T Phi^T v
         if v.ndim == 1:
-            p = self.S.T @ (self.Phi.T @ v)       # (r,)
-            w = v - self.Psi @ p                   # (N,)
+            p = self.S.T @ (self.Phi.T @ v)  # (r,)
+            w = v - self.Psi @ p  # (N,)
         else:
-            p = (self.S.T @ (self.Phi.T @ v.T))    # (r, m)
-            w = v - (self.Psi @ p).T               # (m, N)
+            p = self.S.T @ (self.Phi.T @ v.T)  # (r, m)
+            w = v - (self.Psi @ p).T  # (m, N)
 
         # --- grad_A_k: same VJP as PolynomialModel, using w as the seed ---
         grad_As = []
@@ -241,20 +241,79 @@ class PolynomialProjection(Projection):
         #   grad_Psi = -q p^T  (or -q.T @ p.T for batched)
         if z.ndim == 1:
             h = z - self.Psi.T @ g
-            Sh = self.S @ h                                        # (r,)
-            W = torch.outer(v, Sh)                                 # (N, r)
-            q_decoded = self.Phi @ Sh + g                          # (N,)
+            Sh = self.S @ h  # (r,)
+            W = torch.outer(v, Sh)  # (N, r)
+            q_decoded = self.Phi @ Sh + g  # (N,)
         else:
-            h = z - (self.Psi.T @ g.T).T                          # (m, r)
-            W = v.T @ (h @ self.S.T)                               # (N, r)
-            q_decoded = (self.Phi @ (self.S @ h.T)).T + g          # (m, N)
+            h = z - (self.Psi.T @ g.T).T  # (m, r)
+            W = v.T @ (h @ self.S.T)  # (N, r)
+            q_decoded = (self.Phi @ (self.S @ h.T)).T + g  # (m, N)
 
-        PhiTW = self.Phi.T @ W                                     # (r, r)
-        grad_Phi = W - self.Psi @ (self.S.T @ PhiTW)               # (N, r)
+        PhiTW = self.Phi.T @ W  # (r, r)
+        grad_Phi = W - self.Psi @ (self.S.T @ PhiTW)  # (N, r)
 
         if v.ndim == 1:
-            grad_Psi = -torch.outer(q_decoded, p)                  # (N, r)
+            grad_Psi = -torch.outer(q_decoded, p)  # (N, r)
         else:
-            grad_Psi = -q_decoded.T @ p.T                          # (N, r)
+            grad_Psi = -q_decoded.T @ p.T  # (N, r)
 
         return (grad_Phi, grad_Psi) + tuple(grad_As)
+
+    def vjp_decode_state(self, z: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+        r"""
+        VJP of the decoder with respect to the latent state :math:`z`.
+
+        With :math:`\text{decode}(z) = \Phi S z + \mathbb{P} g(z)`,
+        :math:`g(z) = \sum_k A_k z^{\otimes k}`,
+        :math:`\mathbb{P} = I - \Phi S \Psi^\top`, the Jacobian-transpose is
+
+        .. math::
+
+            \left(\frac{\partial\,\text{decode}}{\partial z}\right)^\top v
+                = S^\top \Phi^\top v
+                + \left(\frac{\partial g}{\partial z}\right)^\top
+                    \underbrace{(v - \Psi S^\top \Phi^\top v)}_{w = \mathbb{P}^\top v}.
+
+        The contraction :math:`(\partial g/\partial z)^\top w` reuses the
+        same combinatorial structure as :meth:`PolynomialModel.evaluate_adjoint_rhs`:
+        for each degree :math:`k`, the free latent index is left out of the
+        product over the remaining :math:`k-1` copies of :math:`z`, summed
+        over which input slot is free.
+
+        :param z: reduced-space vector of shape ``(r,)`` or ``(m, r)``
+        :type z: torch.Tensor
+        :param v: full-space cotangent of shape ``(N,)`` or ``(m, N)``
+        :type v: torch.Tensor
+        :returns: latent-space vector of shape ``(r,)`` or ``(m, r)``
+        :rtype: torch.Tensor
+        """
+        batched = z.ndim == 2
+
+        # Linear part S^T Phi^T v, and w = P^T v.
+        if not batched:
+            p = self.S.T @ (self.Phi.T @ v)  # (r,)
+            w = v - self.Psi @ p  # (N,)
+        else:
+            p = (v @ self.Phi) @ self.S  # (m, r)
+            w = v - p @ self.Psi.T  # (m, N)
+        out = p.clone()
+
+        # Nonlinear part: sum_k (dg_k/dz)^T w.
+        for i, k in enumerate(self.nonlin_poly_comp):
+            A_k = getattr(self, f"A{k}")
+            ss0 = self.einsum_ss[i][0]  # e.g. "abc"
+            out_char = ss0[0]  # full-space output index
+            input_chars = ss0[1:]  # latent input indices
+            for comb in combinations(input_chars, k - 1):
+                free = next(c for c in input_chars if c not in comb)
+                if not batched:
+                    eq = ",".join([ss0, out_char, *comb]) + "->" + free
+                else:
+                    eq = (
+                        ",".join([ss0, "..." + out_char, *("..." + c for c in comb)])
+                        + "->..."
+                        + free
+                    )
+                out = out + torch.einsum(eq, A_k, w, *([z] * (k - 1)))
+
+        return out

@@ -1,5 +1,91 @@
 import torch
-import os
+import torch.distributed as dist
+
+
+def compute_POD(
+    pool,
+    normalize: bool = False,
+    broadcast: bool = True,
+) -> tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]:
+    r"""
+    Compute the proper orthogonal decomposition (POD) of the training data.
+
+    Each rank reshapes its local trajectory snapshots
+    (``pool.X`` of shape ``(my_n_traj, N, n_snapshots)``) into a
+    ``(N, my_n_traj * n_snapshots)`` matrix.  These are gathered onto the
+    root rank (rank 0) and concatenated, in rank order, into the global
+    snapshot matrix
+
+    .. math::
+
+        X \in \mathbb{R}^{N \times (n_\text{traj} \cdot n_\text{snaps})},
+
+    on which the economy SVD :math:`X = U\,\mathrm{diag}(S)\,V^\top` is
+    computed.  The columns of :math:`U` are the POD modes.
+
+    :param pool: training-data pool holding the (possibly rank-distributed)
+        trajectories in ``pool.X``
+    :type pool: TrainingPool
+    :param normalize: if ``True``, scale each trajectory ``k`` by
+        :math:`1/\sqrt{w_k}` (``pool.weights[k]``) before assembling the
+        snapshot matrix, so each trajectory contributes to the POD in
+        inverse proportion to its weight
+    :type normalize: bool
+    :param broadcast: if ``True`` (default), the modes ``U`` and singular
+        values ``S`` are broadcast from root to **every** rank, so the basis
+        is directly usable everywhere; the temporal coefficients ``V`` stay on
+        root.  If ``False``, all factors live only on root.
+    :type broadcast: bool
+    :returns: the economy SVD ``(U, S, V)`` -- ``U`` of shape ``(N, k)``,
+        ``S`` of shape ``(k,)``, ``V`` of shape ``(M, k)`` with
+        ``k = min(N, M)`` and ``M = n_traj * n_snapshots``.  In a distributed
+        run, ``V`` is ``None`` off root; ``U`` and ``S`` are also ``None`` off
+        root unless ``broadcast`` is ``True``.
+    :rtype: tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]
+    """
+    X = pool.X
+    if normalize:
+        # Scale each trajectory by 1 / sqrt(weight).
+        X = X / torch.sqrt(pool.weights).reshape(-1, 1, 1)
+
+    # Local snapshot matrix: (N, my_n_traj * n_snapshots).
+    X_local = X.permute(1, 0, 2).reshape(pool.N, -1)
+
+    distributed = (
+        pool.world_size > 1 and dist.is_available() and dist.is_initialized()
+    )
+
+    if not distributed:
+        U, S, Vh = torch.linalg.svd(X_local, full_matrices=False)
+        return U, S, Vh.mH
+
+    # Gather each rank's local matrix onto root (sizes differ across ranks
+    # when n_traj is not divisible by world_size) and compute the SVD there.
+    gather_list = [None] * pool.world_size if pool.rank == 0 else None
+    dist.gather_object(X_local, gather_list, dst=0)
+    if pool.rank == 0:
+        X = torch.cat(
+            [g.to(device=pool.device, dtype=pool.dtype) for g in gather_list],
+            dim=1,
+        )
+        U, S, Vh = torch.linalg.svd(X, full_matrices=False)
+        V = Vh.mH
+    else:
+        U, S, V = None, None, None
+
+    if broadcast:
+        # Distribute the modes and singular values to every rank.
+        k = min(pool.N, pool.n_traj * pool.n_snapshots)
+        if pool.rank == 0:
+            U, S = U.contiguous(), S.contiguous()
+        else:
+            U = torch.empty((pool.N, k), device=pool.device, dtype=pool.dtype)
+            S = torch.empty((k,), device=pool.device, dtype=pool.dtype)
+        dist.broadcast(U, src=0)
+        dist.broadcast(S, src=0)
+
+    return U, S, V
+
 
 def interp_quadratic(
     t_eval: torch.Tensor,
@@ -32,10 +118,17 @@ def interp_quadratic(
     :returns: interpolated values, shape ``(..., n_eval)``
     :rtype: torch.Tensor
     """
+    # Exact hit: querying at the data points themselves is the identity, so
+    # skip the interpolation entirely.
+    if torch.equal(t_eval, t_data):
+        return y_data
+
     n_data = t_data.shape[0]
 
     # Find the index of the right neighbour for each query point
-    idx = torch.searchsorted(t_data, t_eval).clamp(1, n_data - 1)
+    # (searchsorted wants a contiguous boundary tensor; t_data is often a
+    # strided slice, e.g. tsim[::save_every] from solve_ivp).
+    idx = torch.searchsorted(t_data.contiguous(), t_eval).clamp(1, n_data - 1)
 
     # Choose the centre index of the 3-point stencil, clamped so that
     # i-1, i, i+1 are all valid
@@ -56,67 +149,3 @@ def interp_quadratic(
     y2 = y_data[..., ic + 1]
 
     return y0 * L0 + y1 * L1 + y2 * L2
-
-def setup_distributed() -> tuple[torch.device, int, int]:
-    r"""
-    Initialize the PyTorch distributed process group for multi-GPU or
-    multi-CPU training.
-
-    When launched via ``torchrun``, the environment variables ``RANK``,
-    ``LOCAL_RANK``, and ``WORLD_SIZE`` are read automatically.  The backend
-    is selected based on hardware: **nccl** when CUDA is available,
-    **gloo** otherwise.
-
-    In single-process mode (no ``torchrun``), falls back to a local
-    CUDA or CPU device with rank 0 and world size 1.
-
-    :returns: ``(device, rank, world_size)``
-    :rtype: tuple[torch.device, int, int]
-    """
-    world_size = int(os.environ.get("WORLD_SIZE", 1))
-    if world_size > 1:
-        rank = int(os.environ["RANK"])
-        local_rank = int(os.environ["LOCAL_RANK"])
-
-        if torch.cuda.is_available():
-            torch.cuda.set_device(local_rank)
-            device = torch.device(f"cuda:{local_rank}")
-            backend = "nccl"
-        else:
-            device = torch.device("cpu")
-            backend = "gloo"
-
-        init_kwargs = {
-            "backend": backend,
-            "init_method": "env://",
-            "rank": rank,
-            "world_size": world_size,
-        }
-        if backend == "nccl":
-            init_kwargs["device_id"] = device
-
-        torch.distributed.init_process_group(**init_kwargs)
-
-        if backend == "nccl":
-            torch.distributed.barrier(device_ids=[local_rank])
-        else:
-            torch.distributed.barrier()
-
-        return device, rank, world_size
-    else:
-        # single-process fallback
-        if torch.cuda.is_available():
-            return torch.device("cuda"), 0, 1
-        else:
-            return torch.device("cpu"), 0, 1
-
-
-def cleanup_distributed() -> None:
-    """
-    Destroy the distributed process group if one is active.
-
-    Should be called at the end of the training script to release
-    distributed resources cleanly.
-    """
-    if torch.distributed.is_initialized():
-        torch.distributed.destroy_process_group()
