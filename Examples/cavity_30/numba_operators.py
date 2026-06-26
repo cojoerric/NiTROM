@@ -9,6 +9,7 @@ Created on Tue Dec 20 18:34:37 2022
 import numpy as np
 import numba 
 
+
 @numba.njit("f8[:](f8,f8[:],f8[:],f8[:],f8[:])",cache=True) 
 def laplacian_boundary_conditions_2D(Re,x,y,q,qbc):
     
@@ -267,3 +268,5 @@ def evaluate_bilinearity_2D(x,y,q1,q2,q1bc,q2bc):
     
     
     return qnl
+
+

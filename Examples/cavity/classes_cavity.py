@@ -24,8 +24,8 @@ class flow_class:
         
         self.dx = self.Lx/self.Nx
         self.dy = self.Ly/self.Ny
-        self.x = self.dx*np.arange(0,self.Nx,1) + self.dx/2
-        self.y = self.dy*np.arange(0,self.Ny,1) + self.dy/2
+        self.x = self.dx*np.arange(0,self.Nx,1) + self.dx/2 - 0
+        self.y = self.dy*np.arange(0,self.Ny,1) + self.dy/2 - 0
         
         self.Re = Re
         
@@ -40,9 +40,8 @@ class flow_class:
         self.szv = self.colsv*self.rowsv
         self.szp = self.colsp*self.rowsp
         
-        
         self.q_sbf = np.zeros(self.szu+self.szv)
-        
+
         self.ul = np.zeros(self.rowsu) + 0
         self.ur = np.zeros(self.rowsu) + 0
         self.ub = np.zeros(self.colsu) + 1
@@ -56,9 +55,8 @@ class flow_class:
         self.Ubc = np.zeros((self.rowsu+2,self.colsu+2))
         self.Vbc = np.zeros((self.rowsv+2,self.colsv+2))
         
-    
+
     def populate_boundary_conditions(self,q,cul,cur,cub,cut,cvl,cvr,cvb,cvt):
-        
         
         U = q[:self.szu].reshape((self.rowsu,self.colsu))
         
@@ -88,7 +86,6 @@ class flow_class:
             if self.y[i] >= y0 and self.y[i] <= yf:
                 getattr(self,attr)[i] = np.sin((2*np.pi/l)*(self.y[i] - y0))
         
-
 class linear_operators_2D:
     
     def __init__(self,flow,dt):
@@ -109,6 +106,7 @@ class fom_class:
         self.flow_params = flow_params
         self.lops = lops
         
+    
     
     def compute_output(self,q):
         return q
@@ -180,7 +178,6 @@ class fom_class:
 
         return (A2, A3), (Psi.T@B,)
     
-    
     def evaluate_fom_dynamics(self,vec,bc_coefs_bflow,bc_coefs_pert): 
         
         x = self.flow_params.x
@@ -203,7 +200,6 @@ class fom_class:
         
         return f
     
-    
     def evaluate_full_fom_dynamics(self,vec,bc_coefs): 
         
         x = self.flow_params.x
@@ -220,7 +216,6 @@ class fom_class:
         
         
         return f
-    
 
 
 def estimate_wall_forcing(lops,flow_bflow,flow_pert,vec,bc_coefs_bflow,bc_coefs_pert):
@@ -244,10 +239,3 @@ def estimate_wall_forcing(lops,flow_bflow,flow_pert,vec,bc_coefs_bflow,bc_coefs_
         
     
     return f
-        
-        
-        
-        
-        
-        
-        

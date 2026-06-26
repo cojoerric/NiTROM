@@ -39,32 +39,11 @@ fom.assemble_forcing_profile(0.95, 0.05)
 B = fom.f.copy()
 
 
-X, Y, fields = pp.output_fields(flow,B)
-
-color_map = plt.cm.get_cmap('bwr')
-
-idx = 1
-vmin = np.min(fields[idx]) 
-vmax = -vmin
-
-plt.figure()
-plt.contourf(X[idx],Y[idx],np.flipud(fields[idx]),levels=100,cmap=color_map,vmin=vmin,vmax=vmax)
-ax = plt.gca()
-ax.set_aspect('equal')
-plt.colorbar()
-
-u = fields[0]
-v = fields[1]
-
-print(np.max(fields[idx]),np.min(fields[idx]))
-
-
 nsave = 100
 time = dt*np.arange(0,n*40,1)
 tsave = time[::nsave]
-print(len(tsave))
 
-amps = [-1.0, -0.25, -0.05, 0.01, 0.05, 0.25, 1.0]
+amps = np.random.uniform(-1, 1, size=25)
 bc_coefs = [0,0,1,0,0,0,0,0]
 
 Q = np.zeros((flow.szu + flow.szv,len(amps)*len(tsave)))
@@ -88,25 +67,12 @@ plt.figure()
 for k in range (len(amps)):
     plt.plot(tsave,energy[k,],'k')
 
-
-U, S, _ = sciplin.svd(Q,full_matrices=False)
-Slo = 1 - np.cumsum(S**2)/np.sum(S**2)
-
-plt.figure()
-plt.plot(Slo,'o')
-
-ax = plt.gca()
-ax.set_yscale('log')
-
-
-Phi_pre = U[:,:200]
-
 traj_path = "./trajectories/"
+Phi_pre = np.load(traj_path + "phi_pre.npy")
 
-fname_traj = traj_path + "traj_%03d.npy"
-fname_weight = traj_path + "weight_%03d.npy"
-fname_deriv = traj_path + "deriv_%03d.npy"
-fname_time = traj_path + "time.npy"
+fname_traj = traj_path + "traj_%03d_testing.npy"
+fname_weight = traj_path + "weight_%03d_testing.npy"
+fname_deriv = traj_path + "deriv_%03d_testing.npy"
 
 
 for k in range (len(amps)):
@@ -126,47 +92,4 @@ for k in range (len(amps)):
     np.save(fname_deriv%k,ddata)
     np.save(fname_weight%k,weight)
     
-np.save(fname_time,tsave)
-np.save(traj_path + "amps.npy",amps)
-np.save(traj_path + "phi_pre.npy",Phi_pre)
-    
-
-X, Y, fields = pp.output_fields(flow,U[:,20])
-
-color_map = plt.cm.get_cmap('bwr')
-
-idx = 2
-vmin = np.min(fields[idx]) 
-vmax = -vmin
-
-plt.figure()
-plt.contourf(X[idx],Y[idx],np.flipud(fields[idx]),levels=100,cmap=color_map,vmin=vmin,vmax=vmax)
-ax = plt.gca()
-ax.set_aspect('equal')
-plt.colorbar()
-
-r = 50
-Phi = U[:,:r]
-tensors_pod, _ = fom.assemble_petrov_galerkin_tensors(Phi, Phi, B, bc_coefs)
-
-vec = np.random.randn(flow.szu + flow.szv)
-vec /= np.linalg.norm(vec)
-vec = Phi@(Phi.T@vec)
-
-# Method 1
-rhs = Phi@(Phi.T@fom.evaluate_fom_dynamics(vec,bc_coefs,[0,0,0,0,0,0,0,0]))
-
-# Method 2
-z = Phi.T@vec 
-fz = Phi@(np.einsum('ij,j',tensors_pod[0],z) + np.einsum('ijk,j,k',tensors_pod[1],z,z))
-
-diff = fz - rhs
-print(np.linalg.norm(diff))
-
-# Method 3
-
-fq = Phi@(Phi.T@(fom.evaluate_full_fom_dynamics(vec,bc_coefs) - fom.evaluate_full_fom_dynamics(0*vec,bc_coefs)))
-
-diff = fq - rhs
-print(np.linalg.norm(diff))
-plt.show()
+np.save(traj_path + "amps_testing.npy",amps)

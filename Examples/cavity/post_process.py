@@ -6,7 +6,6 @@ Created on Thu Dec 29 19:21:27 2022
 @author: alberto
 """
 
-
 import numpy as np 
 
 
@@ -51,9 +50,10 @@ def output_fields(flow,q):
 
 def compute_energy(data,q0,tsave):
     
+    N = data.shape[0]
     energy = np.zeros(len(tsave))
     for k in range (len(tsave)):
-        energy[k] = np.dot(data[:,k]-q0,data[:,k]-q0)
+        energy[k] = np.dot(data[:,k]-q0,data[:,k]-q0)/N
         
     return energy
 

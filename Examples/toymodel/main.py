@@ -1,52 +1,44 @@
 import numpy as np 
 import scipy 
-import matplotlib.pyplot as plt
 from mpi4py import MPI
-
-from scipy.interpolate import interp1d
-from scipy.integrate import solve_ivp
-import sys
+import time as tlib
 
 import pymanopt
 import pymanopt.manifolds as manifolds
 import pymanopt.optimizers as optimizers
 from pymanopt.tools.diagnostics import check_gradient
 
-plt.rcParams.update({"font.family":"serif","font.sans-serif":["Computer Modern"],'font.size':18,'text.usetex':True})
-plt.rc('text.latex',preamble=r'\usepackage{amsmath}')
-
-sys.path.append("../../PyManopt_Functions/")
-sys.path.append("../../Optimization_Functions/")
-
-from my_pymanopt_classes import myAdaptiveLineSearcher
-
-
-import classes
-import nitrom_functions 
-import opinf_functions as opinf_fun
-import troop_functions
+from NiTROM.Optimization_Functions import classes, nitrom_functions, opinf_functions as opinf_fun, opinf_functions_grad as opinf_fun_grad
+from NiTROM.Optimization_Functions.utils import create_initial_guess, construct_operators
+from NiTROM.PyManopt_Functions.my_pymanopt_classes import myAdaptiveLineSearcher
 import fom_class
 
 
 cPOD, cOI, cTR, cOPT = '#66c2a5', '#fc8d62', '#8da0cb', '#e78ac3'
 lPOD, lOI, lTR, lOPT = 'solid', 'dotted', 'dashed', 'dashdot'
 
+run_nitrom = 0
+run_opinf = 0
+run_gasopinf = 1
+run_gasnitrom = 0
 
-#%% Instantiate the full-order model class
+
+# Instantiate the full-order model class
 
 n = 3 
-beta = 5
+beta = 20.0
 A2 = np.diag([-1,-2,-5])
 A3 = np.zeros((3,3,3))
 A3[:,:,-1] = np.diag([beta,beta,0.0])
 B = np.ones((3,1))
 C = np.ones((1,3))
-time = np.linspace(0,10,num=20)
 
 fom = fom_class.full_order_model(A2,A3,B,C)
 
-#%% Generate training trajectories and save to file
 
+# Load training trajectories
+
+max_val = 5/20
 traj_path = "./trajectories/"
 
 fname_traj = traj_path + "traj_%03d.npy"
@@ -57,263 +49,186 @@ fname_time = traj_path + "time.npy"
 
 n_traj = 4
 
-max_val = 5/20
-# max_val = 1.0
 
-betas = np.asarray([0.01,0.1,0.2,0.248])
-# betas = max_val*np.asarray([0.05,0.4,0.8,0.99])
-n_traj = len(betas)
-weights = np.zeros(len(betas))
-for k in range (len(betas)):
-    u = betas[k]*np.ones(3)
-    
-    sol = solve_ivp(fom.evaluate_fom_dynamics,[0,time[-1]],np.zeros(3),'RK45',t_eval=time,args=(u,))
-    
-    dX = np.zeros((3,len(time)))
-    for j in range (sol.y.shape[-1]):
-        dX[:,j] = fom.evaluate_fom_dynamics(time[j],sol.y[:,j],u) - u
-    
-    id_ss = np.asarray([-betas[k]/(-1+beta/5*betas[k]),-betas[k]/(-2+beta/5*betas[k]),betas[k]/5])
-    weights[k] = np.linalg.norm(fom.compute_output(id_ss))**2
-    
-    np.save(fname_traj%k,sol.y)
-    np.save(fname_deriv%k,dX)
-    np.save(fname_weight%k,[weights[k]])
-    np.save(fname_forcing%k,u)
-    
-
-np.save(traj_path + "time.npy",time)
-
-
-#%% Compute POD model 
+# Compute POD model 
 
 pool_inputs = (MPI.COMM_WORLD, n_traj, fname_traj, fname_time)
 pool_kwargs = {'fname_steady_forcing':fname_forcing,'fname_weights':fname_weight,'fname_derivs':fname_deriv}
 pool = classes.mpi_pool(*pool_inputs,**pool_kwargs)
 
-
 r = 2               # ROM dimension
 poly_comp = [1,2]   # Model with a linear part and a quadratic part
-
 
 Phi_pod, _ = opinf_fun.perform_POD(pool,2)
 Psi_pod = Phi_pod.copy()
 tensors_pod, _ = fom.assemble_petrov_galerkin_tensors(Phi_pod,Psi_pod)
+A_pod, H_pod = tensors_pod
+
+np.save('results/phi_pod.npy',Phi_pod)
+np.save('results/psi_pod.npy',Psi_pod)
+np.save('results/A_pod.npy',A_pod)
+np.save('results/H_pod.npy',H_pod)
 
 
-#%% Compute NiTROM model 
+# Compute NiTROM model 
 
 which_trajs = np.arange(0,pool.my_n_traj,1)
 which_times = np.arange(0,pool.n_snapshots,1)
 leggauss_deg = 5
-nsave_rom = 10
+nsave_rom = 2
 
 opt_obj_inputs = (pool,which_trajs,which_times,leggauss_deg,nsave_rom,[1,2])
-# opt_obj_kwargs = {'stab_promoting_pen':1e-2,'stab_promoting_tf':20,'stab_promoting_ic':(np.random.randn(r),)}
-
-
-opt_obj = classes.optimization_objects(*opt_obj_inputs) #**opt_obj_kwargs)
-
-
+opt_obj = classes.optimization_objects(*opt_obj_inputs)
 St = manifolds.Stiefel(n,r)
 Gr = manifolds.Grassmann(n,r)
 Euc_rr = manifolds.Euclidean(r,r)
 Euc_rrr = manifolds.Euclidean(r,r,r)
-
 M = manifolds.Product([Gr,St,Euc_rr,Euc_rrr])
-cost, grad, hess = nitrom_functions.create_objective_and_gradient(M,opt_obj,pool,fom)
-problem = pymanopt.Problem(M,cost,euclidean_gradient=grad)
-check_gradient(problem,x=[Phi_pod,Psi_pod,*tensors_pod])
-# check_gradient(problem,x=result.point)
+
+if run_nitrom:
+
+    nitrom_args = (M,opt_obj,pool,fom)
+    cost, grad, hess = nitrom_functions.create_objective_and_gradient(M,opt_obj,pool,fom)
+    problem = pymanopt.Problem(M,cost,euclidean_gradient=grad)
+    # check_gradient(problem,x=[Phi_pod,Psi_pod,*tensors_pod])
+
+    line_searcher = myAdaptiveLineSearcher(contraction_factor=0.5,sufficient_decrease=0.85,max_iterations=25,initial_step_size=1)
+    optimizer = optimizers.ConjugateGradient(max_iterations=3500,min_step_size=1e-20,max_time=3600,line_searcher=line_searcher,log_verbosity=1)
+
+    point = (Phi_pod,Psi_pod) + tensors_pod
+    t1 = tlib.perf_counter()
+    result = optimizer.run(problem,initial_point=point)
+    t2 = tlib.perf_counter()
+    nit_time = t2-t1
+
+    Phi_nit = result.point[0]
+    Psi_nit = result.point[1]
+    Phi_nit = Phi_nit@scipy.linalg.inv(Psi_nit.T@Phi_nit)
+    tensors_nit = tuple(result.point[2:])
+    A_nit, H_nit = tensors_nit
+
+    itervec_nit = result.log["iterations"]["iteration"]
+    costvec_nit = result.log["iterations"]["cost"]
+    gradvec_nit = result.log["iterations"]["gradient_norm"]
+
+    np.save('results/phi_nit.npy',Phi_nit)
+    np.save('results/psi_nit.npy',Psi_nit)
+    np.save('results/A_nit.npy',A_nit)
+    np.save('results/H_nit.npy',H_nit)
+    np.save('results/itervec_nit.npy',itervec_nit)
+    np.save('results/costvec_nit.npy',costvec_nit)
+    np.save('results/nitrom_time.npy',nit_time)
 
 
-line_searcher = myAdaptiveLineSearcher(contraction_factor=0.5,sufficient_decrease=0.85,max_iterations=25,initial_step_size=1)
-optimizer = optimizers.ConjugateGradient(max_iterations=2000,min_step_size=1e-20,max_time=3600,line_searcher=line_searcher,log_verbosity=1)
+# Compute OpInf model
+
+if run_opinf:
+    weights = pool.weights.copy()
+    pool.weights *= pool.n_traj*pool.n_snapshots
+
+    lam = np.logspace(-8,-2,num=100)
+    cost_oi = []
+    for (count,l) in enumerate(lam):
+        tensors_opinf = opinf_fun.operator_inference(pool,Phi_pod,poly_comp,[0.0,l])
+        point = (Phi_pod,Psi_pod) + tensors_opinf
+        cost_oi.append(cost(*point))
+
+    pool.weights = weights
+
+    lambdas = [0.0,lam[np.argmin(cost_oi)]]
+    print(np.min(cost_oi),lambdas)
+    weights = pool.weights.copy()
+    pool.weights *= pool.n_traj*pool.n_snapshots
+    t1 = tlib.perf_counter()
+    tensors_oi = opinf_fun.operator_inference(pool,Phi_pod,poly_comp,lambdas)
+    t2 = tlib.perf_counter()
+    opinf_time = t2-t1
+    pool.weights = weights
+    A_oi, H_oi = tensors_oi
+
+    np.save('results/A_oi.npy',A_oi)
+    np.save('results/H_oi.npy',H_oi)
+    np.save('results/opinf_time.npy',opinf_time)
 
 
-point = (Phi_pod,Psi_pod) + tensors_pod
-result = optimizer.run(problem,initial_point=point)
-check_gradient(problem,x=result.point)
+# Compute GasOpInf model
 
-Phi_nit = result.point[0]
-Psi_nit = result.point[1]
-Phi_nit = Phi_nit@scipy.linalg.inv(Psi_nit.T@Phi_nit)
-tensors_nit = tuple(result.point[2:])
+if run_gasopinf:
+    initial_guess = create_initial_guess(A_pod, H_pod)
+    M_opinf = manifolds.Product([Euc_rr,Euc_rr,Euc_rr,Euc_rrr])
+    line_searcher = myAdaptiveLineSearcher(contraction_factor=0.5,sufficient_decrease=0.85,max_iterations=25,initial_step_size=1)
+    optimizer = optimizers.ConjugateGradient(max_iterations=2000,min_step_size=1e-20,max_time=3600,line_searcher=line_searcher,verbosity=1,log_verbosity=1)
 
+    weights = pool.weights.copy()
+    pool.weights *= pool.n_traj*pool.n_snapshots
+    lam = np.logspace(-8,-7,num=15)
+    cost_oi_gs = []
+    for (count,l) in enumerate(lam):
+        opinf_kwargs = {'glob_stable':True,'regularization_H':l}
+        cost, grad = opinf_fun_grad.create_objective_and_gradient(M_opinf,opt_obj,Phi_pod,**opinf_kwargs)
+        problem = pymanopt.Problem(M_opinf,cost,euclidean_gradient=grad)
+        result = optimizer.run(problem,initial_point=initial_guess)
+        
+        cost_func_nit, _, _ = nitrom_functions.create_objective_and_gradient(M,opt_obj,pool,fom,glob_stable=True)
+        cost_nit = cost_func_nit(Phi_pod,Psi_pod,*result.point)
+        cost_oi_gs.append(cost_nit)
 
-itervec_nit = result.log["iterations"]["iteration"]
-costvec_nit = result.log["iterations"]["cost"]
-gradvec_nit = result.log["iterations"]["gradient_norm"]
+    pool.weights = weights
+    lambda_gs = lam[np.argmin(cost_oi_gs)]
+    print(np.min(cost_oi_gs), lambda_gs)
+    weights = pool.weights.copy()
+    pool.weights *= pool.n_traj*pool.n_snapshots
+    opinf_kwargs = {'glob_stable':True,'regularization_H':lambda_gs}
+    cost, grad = opinf_fun_grad.create_objective_and_gradient(M_opinf,opt_obj,Phi_pod,**opinf_kwargs)
+    problem = pymanopt.Problem(M_opinf,cost,euclidean_gradient=grad)
+    optimizer = optimizers.ConjugateGradient(max_iterations=3500,min_step_size=1e-20,max_time=3600,line_searcher=line_searcher,verbosity=1,log_verbosity=1)
+    t1 = tlib.perf_counter()
+    result = optimizer.run(problem,initial_point=initial_guess)
+    t2 = tlib.perf_counter()
+    pool.weights = weights
+    gasopinf_time = t2-t1
+    Qhat, Jhat, Rhat, Hhat = result.point
+    A_oi_gs, H_oi_gs = construct_operators((Qhat, Jhat, Rhat, Hhat), poly_comp)[0]
 
+    itervec_oi_gs = result.log["iterations"]["iteration"]
+    costvec_oi_gs = result.log["iterations"]["cost"]
 
-#%% Compute TrOOP model
-
-optimizer = optimizers.ConjugateGradient(max_iterations=300,min_step_size=1e-20,max_time=3600,line_searcher=line_searcher,log_verbosity=1,min_gradient_norm=1e-7)
-
-M = manifolds.Product([Gr,Gr])
-cost_troop, grad_troop, _ = troop_functions.create_objective_and_gradient(M,opt_obj,pool,fom)
-problem = pymanopt.Problem(M,cost_troop,euclidean_gradient=grad_troop)
-
-
-result = optimizer.run(problem,initial_point=(Phi_pod,Psi_pod))
-check_gradient(problem,x=result.point)
-
-Phi_tr = result.point[0]
-Psi_tr = result.point[1]
-Phi_tr = Phi_tr@scipy.linalg.inv(Psi_tr.T@Phi_tr)
-
-tensors_tr, _ = fom.assemble_petrov_galerkin_tensors(Phi_tr,Psi_tr)
-
-itervec_tr = result.log["iterations"]["iteration"]
-costvec_tr = result.log["iterations"]["cost"]
-gradvec_tr = result.log["iterations"]["gradient_norm"]
-
-
-#%%
-plt.figure()
-plt.plot(itervec_tr,costvec_tr,color=cTR,linestyle=lTR,label='TrOOP')
-plt.plot(itervec_nit,costvec_nit,color=cOPT,linestyle=lOPT,label='NiTROM')
-
-ax = plt.gca()
-ax.set_yscale('log')
-ax.set_xlabel('Conj. gradient iteration')
-ax.set_ylabel('Cost')
-
-# ax.set_box_aspect(0.30)
-
-plt.legend()
-plt.tight_layout()
-
-# plt.savefig("Figures/convergence_plot_beta%d.eps"%beta,format='eps')
+    np.save('results/A_oi_gs.npy',A_oi_gs)
+    np.save('results/H_oi_gs.npy',H_oi_gs)
+    np.save('results/itervec_oi_gs.npy',itervec_oi_gs)
+    np.save('results/costvec_oi_gs.npy',costvec_oi_gs)
+    np.save('results/gasopinf_time.npy',gasopinf_time)
 
 
-#%% Compute OpInf model
+# Compute GasNiTROM model
 
-# weights = pool.weights.copy()
-# pool.weights *= pool.n_traj*pool.n_snapshots
+if run_gasnitrom:
+    line_searcher = myAdaptiveLineSearcher(contraction_factor=0.5,sufficient_decrease=0.05,max_iterations=10,initial_step_size=1)
+    optimizer = optimizers.ConjugateGradient(max_iterations=3500,min_step_size=1e-20,max_time=3600,line_searcher=line_searcher,log_verbosity=1)
+    M_gasnitrom = manifolds.Product([Gr,St,Euc_rr,Euc_rr,Euc_rr,Euc_rrr])
 
-lam = np.logspace(-8,-2,num=2000)
-cost_oi = []
-for (count,l) in enumerate(lam):
-    tensors_opinf = opinf_fun.operator_inference(pool,Phi_pod,poly_comp,[0.0,l])
-    point = (Phi_pod,Psi_pod) + tensors_opinf
-    cost_oi.append(cost(*point))
+    point = (Phi_pod,Psi_pod) + (Qhat, Jhat, Rhat, Hhat)
+    nitrom_kwargs = {'glob_stable':True}
+    cost, grad, hess = nitrom_functions.create_objective_and_gradient(M_gasnitrom,opt_obj,pool,fom,**nitrom_kwargs)
+    problem = pymanopt.Problem(M_gasnitrom,cost,euclidean_gradient=grad)
+    t1 = tlib.perf_counter()
+    result = optimizer.run(problem,initial_point=point)
+    t2 = tlib.perf_counter()
+    gasnit_time = t2-t1
 
-# pool.weights = weights
+    Phi_nit_gs = result.point[0]
+    Psi_nit_gs = result.point[1]
+    Phi_nit_gs = Phi_nit_gs@scipy.linalg.inv(Psi_nit_gs.T@Phi_nit_gs)
+    Qhat, Jhat, Rhat, Hhat = result.point[2:]
+    A_nit_gs, H_nit_gs = construct_operators((Qhat, Jhat, Rhat, Hhat), poly_comp)[0]
 
-#%%
-plt.figure()
-plt.plot(lam,cost_oi)
+    itervec_nit = result.log["iterations"]["iteration"]
+    costvec_nit = result.log["iterations"]["cost"]
 
-#%%
-lambdas = [0.0,lam[np.argmin(cost_oi)]]
-print(np.min(cost_oi),lambdas)
-tensors_oi = opinf_fun.operator_inference(pool,Phi_pod,poly_comp,lambdas)
-
-#%%
-
-betas = np.random.uniform(0.0,0.999*max_val,size=100)
-t_eval = np.linspace(0,10,num=200)
-
-error_pod = np.zeros_like(t_eval)
-error_tr = np.zeros_like(t_eval)
-error_oi = np.zeros_like(t_eval)
-error_nit = np.zeros_like(t_eval)
-
-for k in range (len(betas)):
-    u = betas[k]*np.ones(3)
-    
-    
-    sol = solve_ivp(fom.evaluate_fom_dynamics,[0,time[-1]],np.zeros(3),'RK45',t_eval=t_eval,args=(u,)).y
-    id_ss = np.asarray([-betas[k]/(-1+4*betas[k]),-betas[k]/(-2+4*betas[k]),betas[k]/5])
-    weight = np.linalg.norm(fom.compute_output(id_ss))**2
-    
-    
-    sol_pod = Phi_pod@(solve_ivp(opt_obj.evaluate_rom_rhs,[0,time[-1]],np.zeros(r),'RK45',t_eval=t_eval,args=(Phi_pod.T@u,) + tensors_pod)).y
-    sol_tr = Phi_tr@(solve_ivp(opt_obj.evaluate_rom_rhs,[0,time[-1]],np.zeros(r),'RK45',t_eval=t_eval,args=(Psi_tr.T@u,) + tensors_tr)).y
-    sol_nit = Phi_nit@(solve_ivp(opt_obj.evaluate_rom_rhs,[0,time[-1]],np.zeros(r),'RK45',t_eval=t_eval,args=(Psi_nit.T@u,) + tensors_nit)).y
-    sol_oi = Phi_pod@(solve_ivp(opt_obj.evaluate_rom_rhs,[0,time[-1]],np.zeros(r),'RK45',t_eval=t_eval,args=(Phi_pod.T@u,) + tensors_oi)).y
-    
-    error_pod += np.linalg.norm(C@(sol_pod - sol),axis=0)**2/weight/len(betas)
-    error_tr += np.linalg.norm(C@(sol_tr - sol),axis=0)**2/weight/len(betas)
-    error_oi += np.linalg.norm(C@(sol_oi - sol),axis=0)**2/weight/len(betas)
-    error_nit += np.linalg.norm(C@(sol_nit - sol),axis=0)**2/weight/len(betas)
-    
-    
-
-plt.figure()
-plt.plot(t_eval,error_pod,color=cPOD,linestyle=lPOD,label='POD Gal.')
-plt.plot(t_eval,error_oi,color=cOI,linestyle=lOI,label='OpInf')
-plt.plot(t_eval,error_tr,color=cTR,linestyle=lTR,label='TrOOP')
-plt.plot(t_eval,error_nit,color=cOPT,linestyle=lOPT,label='NiTROM')
-
-
-ax = plt.gca()
-ax.set_xlabel('Time $t$')
-ax.set_ylabel('Average error $e(t)$')
-ax.set_yscale('log')
-
-plt.legend()
-plt.tight_layout()
-
-plt.savefig("Figures/testing_error_beta%d.eps"%beta,format='eps')
-    
-
-#%%
-tk = np.linspace(0,30,num=10000)
-uk = 0.45*(np.sin(tk) + np.cos(2*tk))
-
-t_eval = np.linspace(0,30,num=1000)
-
-
-fu = scipy.interpolate.interp1d(tk,np.outer(B,uk),kind='linear',fill_value='extrapolate')
-sol_fom = (solve_ivp(fom.evaluate_fom_dynamics,[0,tk[-1]],np.zeros(3),'RK45',t_eval=t_eval,args=(fu,))).y
-
-
-
-fu = scipy.interpolate.interp1d(tk,np.outer(Psi_pod.T@B,uk),kind='linear',fill_value='extrapolate')
-sol_pod = Phi_pod@(solve_ivp(opt_obj.evaluate_rom_rhs,[0,tk[-1]],np.zeros(r),'RK45',t_eval=t_eval,args=(fu,) + tensors_pod)).y
-
-
-fu = scipy.interpolate.interp1d(tk,np.outer(Psi_pod.T@B,uk),kind='linear',fill_value='extrapolate')
-sol_oi = Phi_pod@(solve_ivp(opt_obj.evaluate_rom_rhs,[0,tk[-1]],np.zeros(r),'RK45',t_eval=t_eval,args=(fu,) + tensors_oi)).y
-
-
-fu = scipy.interpolate.interp1d(tk,np.outer(Psi_tr.T@B,uk),kind='linear',fill_value='extrapolate')
-sol_tr = Phi_tr@(solve_ivp(opt_obj.evaluate_rom_rhs,[0,tk[-1]],np.zeros(r),'RK45',t_eval=t_eval,args=(fu,) + tensors_tr)).y
-
-
-fu = scipy.interpolate.interp1d(tk,np.outer(Psi_nit.T@B,uk),kind='linear',fill_value='extrapolate')
-sol_nit = Phi_nit@(solve_ivp(opt_obj.evaluate_rom_rhs,[0,tk[-1]],np.zeros(r),'RK45',t_eval=t_eval,args=(fu,) + tensors_nit)).y
-
-
-plt.figure()
-plt.plot(t_eval,fom.compute_output(sol_fom)[0,],color='k',linewidth=2)
-plt.plot(t_eval,fom.compute_output(sol_pod)[0,],color=cPOD,linestyle=lPOD,linewidth=2)
-plt.plot(t_eval,fom.compute_output(sol_oi)[0,],color=cOI,linestyle=lOI,linewidth=2)
-plt.plot(t_eval,fom.compute_output(sol_tr)[0,],color=cTR,linestyle=lTR,linewidth=2)
-plt.plot(t_eval,fom.compute_output(sol_nit)[0,],color=cOPT,linestyle=lOPT,linewidth=2)
-
-ax = plt.gca()
-ax.set_xlabel('Time $t$')
-ax.set_ylabel('$y(t)$')
-# ax.set_title('$u(t) = 0.45(\sin(t) + \cos(2t))$')
-
-plt.tight_layout()
-
-# plt.savefig("Figures/sinusoid_beta%d.eps"%beta,format='eps')
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-
-
-
+    np.save('results/phi_nit_gs.npy',Phi_nit_gs)
+    np.save('results/psi_nit_gs.npy',Psi_nit_gs)
+    np.save('results/A_nit_gs.npy',A_nit_gs)
+    np.save('results/H_nit_gs.npy',H_nit_gs)
+    np.save('results/itervec_nit.npy',itervec_nit)
+    np.save('results/costvec_nit.npy',costvec_nit)
+    np.save('results/gasnitrom_time.npy',gasnit_time)

@@ -9,6 +9,8 @@ setup(
         'scipy',
         'numba',
         'matplotlib',
+        'pymanopt',
+        'mpi4py',
     ],
     description='Non-intrusive Trajectory-based Reduced-Order Modelling',
     long_description=open('README.md').read(),

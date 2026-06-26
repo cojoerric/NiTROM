@@ -26,6 +26,7 @@ class myAdaptiveLineSearcher:
         newx = manifold.retraction(x, alpha * d)
         newf = objective(newx)
         cost_evaluations = 1
+        accepted = newf <= f0 + self._sufficient_decrease * alpha * df0
 
         while (
             newf > f0 + self._sufficient_decrease * alpha * df0
@@ -37,6 +38,7 @@ class myAdaptiveLineSearcher:
             # Look closer down the line.
             newx = manifold.retraction(x, alpha * d)
             newf = objective(newx)
+            accepted = newf <= f0 + self._sufficient_decrease * alpha * df0
 
             cost_evaluations += 1
 
@@ -49,6 +51,7 @@ class myAdaptiveLineSearcher:
             newx = manifold.retraction(x, alpha * d)
             newf = objective(newx)
             cost_evaluations = 1
+            accepted = newf <= 1.01 * f0
 
             while (
                 newf > 1.01*f0 and cost_evaluations <= self._max_iterations
@@ -59,14 +62,14 @@ class myAdaptiveLineSearcher:
                 # Look closer down the line.
                 newx = manifold.retraction(x, alpha * d)
                 newf = objective(newx)
+                accepted = newf <= 1.01 * f0
 
                 cost_evaluations += 1
         # -----------------------------
 
-        # Alby: uncomment back
-        # if newf > f0:
-        #     alpha = 0
-        #     newx = x
+        if not accepted:
+            alpha = 0.0
+            newx = x
 
         step_size = alpha * norm_d
 
@@ -80,17 +83,10 @@ class myAdaptiveLineSearcher:
 
         # If things go reasonably well, try to keep pace.
         if cost_evaluations == 2:
-            self._oldalpha = 10 * alpha # Modified by Alby: used to be 1 * alpha
+            self._oldalpha = 2 * alpha
         # If things went very well or we backtracked a lot (meaning the step
         # size is probably quite small), speed up.
         else:
-            self._oldalpha = 100 * alpha # Modified by Alby: used to be 2 * alpha
-
-        # ## ------- Introduced by Alby 
-        # if alpha <= 1e-7: 
-        #     self._oldalpha = None
-        #     print("Resetting _old_alpha. Alpha = %1.5e"%(alpha))
-        # ## -------------------------
-        self._oldalpha = None
+            self._oldalpha = 5 * alpha
 
         return step_size, newx

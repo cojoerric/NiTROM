@@ -32,7 +32,9 @@ def augment_pressure_laplacian(flow,L):
 
 def gradient_2D(flow):
     
-    rows, cols, data = [], [], []
+    rows = []
+    cols = []
+    data = []
     
     # --------------------------------------------------------
     # ---------- X momentum ----------------------------------
@@ -80,7 +82,9 @@ def gradient_2D(flow):
 
 def laplacian_2D(flow):
     
-    rows, cols, data = [], [], []
+    rows = []
+    cols = []
+    data = []
     
     val_jpm1 = 1.0/(flow.dx*flow.dx*flow.Re)
     val_ipm1 = 1.0/(flow.dy*flow.dy*flow.Re)
@@ -144,6 +148,7 @@ def laplacian_2D(flow):
                 data.extend([val_ij,val_jpm1,val_ipm1])
                 
                 
+    
     L = ssparse.csr_matrix((data,(rows,cols)), shape=(flow.szu+flow.szv,flow.szu+flow.szv))
     L.eliminate_zeros()
     L.sort_indices()

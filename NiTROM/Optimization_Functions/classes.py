@@ -118,6 +118,8 @@ class optimization_objects:
         
         self.X = mpi_pool.X[which_trajs,:,:]      
         self.X = self.X[:,:,which_times]
+        self.dX = mpi_pool.dX[which_trajs,:,:]
+        self.dX = self.dX[:,:,which_times]
         self.F = mpi_pool.F[:,which_trajs]
         self.time = mpi_pool.time[which_times]
         self.weights = mpi_pool.weights[which_trajs]

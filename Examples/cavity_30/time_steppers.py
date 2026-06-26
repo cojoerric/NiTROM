@@ -10,7 +10,6 @@ import numba_operators as numbaops
 import time as tlib
 
 
-
 def solver_2D(flow,lops,qic,time,n,bc_coefs_,*argv,**kwargs):
     
     bc_coefs = bc_coefs_.copy()
@@ -95,4 +94,3 @@ def solver_2D(flow,lops,qic,time,n,bc_coefs_,*argv,**kwargs):
             
             
     return data, tsave
-

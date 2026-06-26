@@ -4,9 +4,10 @@ from scipy.integrate import solve_ivp
 from string import ascii_lowercase as ascii
 import pymanopt
 
-import time as tlib
+from .utils import construct_operators, propagate_gradients
 
-def create_objective_and_gradient(manifold,opt_obj,mpi_pool,fom):
+
+def create_objective_and_gradient(*args, **kwargs):
     
     """
     opt_obj:        instance of class "optimization_objects" in file "nitrom_classes.py"
@@ -15,6 +16,9 @@ def create_objective_and_gradient(manifold,opt_obj,mpi_pool,fom):
     """
 
     euclidean_hessian = None
+    manifold, opt_obj, mpi_pool, fom = args
+    poly_comp = opt_obj.poly_comp
+    glob_stable = kwargs.get('glob_stable', False)
 
     @pymanopt.function.numpy(manifold)
     def cost(*params):
@@ -27,9 +31,12 @@ def create_objective_and_gradient(manifold,opt_obj,mpi_pool,fom):
         
         
         Phi, Psi = params[0], params[1]
-        tensors = params[2:]
+        tensors_old = params[2:]
         PhiF = Phi@sp.linalg.inv(Psi.T@Phi)
-
+        if glob_stable:
+            tensors, _ = construct_operators(tensors_old, poly_comp)
+        else:
+            tensors = tensors_old
         
         J = 0.0
         for k in range (opt_obj.my_n_traj): 
@@ -65,7 +72,11 @@ def create_objective_and_gradient(manifold,opt_obj,mpi_pool,fom):
         """
 
         Phi, Psi = params[0], params[1]
-        tensors = params[2:]
+        tensors_old = params[2:]
+        if glob_stable:
+            tensors, other_tensors = construct_operators(tensors_old, poly_comp)
+        else:
+            tensors = tensors_old
         
         # Initialize arrays to store the gradients
         n, r = Phi.shape
@@ -223,7 +234,12 @@ def create_objective_and_gradient(manifold,opt_obj,mpi_pool,fom):
             for k in range (len(grad_tensors)):
                 grad_tensors[k] = sum(mpi_pool.comm.allgather(grad_tensors[k]))
 
-        return grad_Phi, grad_Psi, *grad_tensors
+        if glob_stable:
+            grad_tensors_new = propagate_gradients(grad_tensors, other_tensors, tensors_old, poly_comp)
+        else:
+            grad_tensors_new = grad_tensors
+
+        return grad_Phi, grad_Psi, *grad_tensors_new
     
 
     return cost, euclidean_gradient, euclidean_hessian

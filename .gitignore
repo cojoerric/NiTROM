@@ -168,6 +168,7 @@ cython_debug/
 *.csv
 
 # Ignore all folders data/ and results/
+**/trajectories/
 **/data/
 **/results/
 **/figures/
