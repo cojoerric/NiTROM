@@ -6,7 +6,9 @@ import torch.distributed as dist
 
 from nitrom.backend import cleanup_distributed, setup_distributed
 from nitrom.latent_space_models.gas_polynomial_model import GasPolynomialModel
+from nitrom.latent_space_models.polynomial_model import PolynomialModel
 from nitrom.optimization import OpInfModule, train
+from nitrom.projections.linear_projection import LinearProjection
 from nitrom.training_data import TrainingData, TrainingPool
 from nitrom.utils import compute_POD
 
@@ -80,10 +82,12 @@ pool = TrainingPool(
 
 U, _, _ = compute_POD(pool, normalize=True)
 Phi = U[:, :r]  # (N, r)
+projection = LinearProjection([Phi, Phi])  # orthogonal (Psi = Phi)
 
-# B = Phi^T B_fom (fixed, not learned); the toy FOM is driven by B_fom=ones(N,1).
+# B = encode(B_fom) (fixed, not learned); the toy FOM is driven by B_fom=ones(N,1).
 B_fom = torch.ones(Phi.shape[0], 1, device=device, dtype=dtype)
-forcing_config = {"forcing_exists": True, "B_fom": B_fom}
+B_r = projection.encode(B_fom.T).T  # fixed reduced input operator, (r, m)
+forcing_config = {"forcing_exists": True, "B": B_r, "m": B_fom.shape[1]}
 
 training_data = TrainingData(
     pool,
@@ -114,9 +118,10 @@ if rank == 0:
 # %% 1) Train standard operator inference
 
 printr("\n=== OpInf ===")
-opinf = OpInfModule(
-    training_data, poly_comp, Phi, reg=1e-10, forcing_config=forcing_config
+opinf_model = PolynomialModel(
+    r, poly_comp, device=device, dtype=dtype, forcing_config=forcing_config
 )
+opinf = OpInfModule(training_data, opinf_model, projection, reg=1e-10)
 opinf.set_unlearnable("B")  # B = Phi^T B_fom is fixed, not trained
 printr(f"initial cost: {global_cost(opinf):.6e}")
 train(opinf, n_epochs=200, lr=1.0, optimizer_type="lbfgs", print_every=1, tol=1e-14)
@@ -136,15 +141,11 @@ seed = GasPolynomialModel(r, poly_comp, device=device, dtype=dtype)
 seed.retract_general_tensors_to_gas_tensors([opinf.A_1.detach(), opinf.A_2.detach()])
 gas_init = [*seed.get_params(), opinf.B.detach().clone()]
 
-gas = OpInfModule(
-    training_data,
-    poly_comp,
-    Phi,
-    reg=1e-10,
-    gas_flag=True,
-    initial_guess=gas_init,
-    forcing_config=forcing_config,
+gas_model = GasPolynomialModel(
+    r, poly_comp, device=device, dtype=dtype,
+    gas_params=gas_init, forcing_config=forcing_config,
 )
+gas = OpInfModule(training_data, gas_model, projection, reg=1e-10)
 gas.set_unlearnable("B")  # B = Phi^T B_fom is fixed, not trained
 printr(f"initial cost: {global_cost(gas):.6e}")
 # GAS-OpInf is non-convex; restart LBFGS to push past line-search stalls.

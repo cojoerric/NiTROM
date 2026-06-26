@@ -4,12 +4,35 @@ import numpy as np
 import pytest
 import torch
 
+from nitrom.latent_space_models.gas_polynomial_model import GasPolynomialModel
+from nitrom.latent_space_models.polynomial_model import PolynomialModel
 from nitrom.optimization import OpInfModule
-
+from nitrom.projections.linear_projection import LinearProjection
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _make_module(
+    opt_obj, Phi, poly_comp=(1, 2), reg=0.0, gas_flag=False,
+    initial_guess=None, forcing_config=None,
+):
+    """Build a latent-space model then wrap it in an OpInfModule."""
+    r = Phi.shape[-1]
+    if gas_flag:
+        rom = GasPolynomialModel(
+            r, list(poly_comp), dtype=Phi.dtype,
+            gas_params=initial_guess, forcing_config=forcing_config,
+        )
+    else:
+        rom = PolynomialModel(
+            r, list(poly_comp), dtype=Phi.dtype,
+            tensors=initial_guess, forcing_config=forcing_config,
+        )
+    projection = LinearProjection([Phi, Phi])
+    return OpInfModule(opt_obj, rom, projection, reg=reg)
+
 
 class _MockOptObj:
     """Minimal stand-in for TrainingData with X, dX, weights."""
@@ -50,21 +73,21 @@ def model(request):
     opt_obj = _MockOptObj(NTRAJ, N, NT, dtype=DTYPE, seed=0)
     Phi = _make_phi(N, R)
     poly_comp = [1, 2]
-    return OpInfModule(opt_obj, poly_comp, Phi, reg=0.01, gas_flag=gas_flag)
+    return _make_module(opt_obj, Phi, poly_comp, reg=0.01, gas_flag=gas_flag)
 
 
 @pytest.fixture()
 def model_standard():
     opt_obj = _MockOptObj(NTRAJ, N, NT, dtype=DTYPE, seed=0)
     Phi = _make_phi(N, R)
-    return OpInfModule(opt_obj, [1, 2], Phi, reg=0.01, gas_flag=False)
+    return _make_module(opt_obj, Phi, [1, 2], reg=0.01, gas_flag=False)
 
 
 @pytest.fixture()
 def model_gas():
     opt_obj = _MockOptObj(NTRAJ, N, NT, dtype=DTYPE, seed=0)
     Phi = _make_phi(N, R)
-    return OpInfModule(opt_obj, [1, 2], Phi, reg=0.01, gas_flag=True)
+    return _make_module(opt_obj, Phi, [1, 2], reg=0.01, gas_flag=True)
 
 
 def _make_forcing_fns(ntraj, m, seed=77):
@@ -89,7 +112,7 @@ def model_standard_forcing():
     opt_obj = _MockOptObj(NTRAJ, N, NT, dtype=DTYPE, seed=0, forcing_fns=forcing_fns)
     Phi = _make_phi(N, R)
     fc = {"forcing_exists": True, "m": M}
-    return OpInfModule(opt_obj, [1, 2], Phi, reg=0.01, gas_flag=False, forcing_config=fc)
+    return _make_module(opt_obj, Phi, [1, 2], reg=0.01, gas_flag=False, forcing_config=fc)
 
 
 @pytest.fixture()
@@ -98,7 +121,7 @@ def model_gas_forcing():
     opt_obj = _MockOptObj(NTRAJ, N, NT, dtype=DTYPE, seed=0, forcing_fns=forcing_fns)
     Phi = _make_phi(N, R)
     fc = {"forcing_exists": True, "m": M}
-    return OpInfModule(opt_obj, [1, 2], Phi, reg=0.01, gas_flag=True, forcing_config=fc)
+    return _make_module(opt_obj, Phi, [1, 2], reg=0.01, gas_flag=True, forcing_config=fc)
 
 
 # ---------------------------------------------------------------------------
@@ -212,7 +235,7 @@ class TestInitialGuess:
             torch.eye(R, dtype=DTYPE),
             torch.zeros(R, R, R, dtype=DTYPE),
         ]
-        model = OpInfModule(opt_obj, poly_comp, Phi, initial_guess=init)
+        model = _make_module(opt_obj, Phi, poly_comp, initial_guess=init)
 
         params = list(model.parameters())
         np.testing.assert_allclose(params[0].detach().numpy(), init[0].numpy())
@@ -229,7 +252,7 @@ class TestInitialGuess:
             torch.eye(R, dtype=DTYPE),       # Q
             0.01 * torch.randn(R, R, R, dtype=DTYPE),  # S
         ]
-        model = OpInfModule(opt_obj, poly_comp, Phi, gas_flag=True, initial_guess=init)
+        model = _make_module(opt_obj, Phi, poly_comp, gas_flag=True, initial_guess=init)
 
         params = list(model.parameters())
         assert len(params) == 4

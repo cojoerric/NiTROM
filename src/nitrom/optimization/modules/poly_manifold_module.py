@@ -190,4 +190,5 @@ class PolyManifoldInfModule(InferenceModule):
         for i, name in enumerate(self._trainable_names):
             grads[i] = grads[i] + 2.0 * self.reg * getattr(self.proj, name)
 
-        return grads
+        # Zero the gradient of any non-learnable parameter (base class).
+        return self._apply_learnability(grads)

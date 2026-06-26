@@ -386,4 +386,7 @@ class NitromModule(InferenceModule):
                 grad_by_name[name] = (
                     grad_by_name[name] + g if name in grad_by_name else g
                 )
-            return [grad_by_name[name] for name in self.registry.names]
+            grads = [grad_by_name[name] for name in self.registry.names]
+
+        # Zero the gradient of any non-learnable parameter (base class).
+        return self._apply_learnability(grads)
