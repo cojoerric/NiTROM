@@ -35,10 +35,10 @@ else:
     verb = 0
 
 use_ic = 0
-run_pod = 1
-run_opinf = 1
-run_opinf_gs = 1
-run_nitrom = 1
+run_pod = 0
+run_opinf = 0
+run_opinf_gs = 0
+run_nitrom = 0
 run_nitrom_gs = 1
 
 Lx = 1
@@ -96,6 +96,10 @@ psi_pod = phi_pod.copy()
 phi_tot = phi_pre @ phi_pod
 psi_tot = phi_pre @ psi_pod
 
+# if rank == 0:
+#     np.save('results/phi_pod.npy', phi_pod)
+#     np.save('results/psi_pod.npy', psi_pod)
+
 
 ## Load previous run to use as IC
 if use_ic:
@@ -145,7 +149,7 @@ if run_opinf:
     weights = pool.weights.copy()
     pool.weights *= pool.n_traj*pool.n_snapshots
 
-    lam = np.logspace(-4,-1,num=30)
+    lam = np.logspace(6.9,7.2,num=30)
     cost_oi = []
     for (count,l) in enumerate(lam):
         tensors_opinf = opinf_fun.operator_inference(pool, phi_pod, poly_comp, [0.0,l])
@@ -181,15 +185,17 @@ if run_opinf:
 if run_opinf_gs:
     if rank == 0:
         print("\nTraining OpInf (GS) Model...")
+    A_ic = np.load('results/A_pod.npy')
+    H_ic = np.load('results/H_pod.npy')
     initial_guess = create_initial_guess(A_ic, H_ic)
     M_opinf = manifolds.Product([Euc_rr,Euc_rr,Euc_rr,Euc_rrr])
     line_searcher = myAdaptiveLineSearcher(contraction_factor=0.5,sufficient_decrease=0.85,max_iterations=25,initial_step_size=1)
-    optimizer = optimizers.ConjugateGradient(max_iterations=2000,min_step_size=1e-20,max_time=3600,line_searcher=line_searcher,log_verbosity=0)
+    optimizer = optimizers.ConjugateGradient(max_iterations=2000,min_step_size=1e-20,max_time=3600,line_searcher=line_searcher,verbosity=verb,log_verbosity=1)
 
     weights = pool.weights.copy()
     pool.weights *= pool.n_traj*pool.n_snapshots
 
-    lam = np.logspace(-6,-3,num=30)
+    lam = np.logspace(-2,-1,num=10)
     cost_oi_gs = []
     for count, l in enumerate(lam):
         opinf_kwargs = {'glob_stable':True,'regularization_H':l}
@@ -203,6 +209,7 @@ if run_opinf_gs:
         cost_oi_gs.append(cost_nit)
         if rank == 0:
             print(f"  Lambda {count+1}/{len(lam)}: {l:.4e}, Cost: {cost_oi_gs[-1]:.6e}")
+        initial_guess = result.point
 
     pool.weights = weights
 
@@ -215,6 +222,8 @@ if run_opinf_gs:
 
     opinf_kwargs = {'glob_stable':True,'regularization_H':lambdas[1]}
     cost_oi_fun, grad_oi_fun = opinf_fun_grad.create_objective_and_gradient(M_opinf,opt_obj,phi_pod,**opinf_kwargs)
+    line_searcher = myAdaptiveLineSearcher(contraction_factor=0.5,sufficient_decrease=0.85,max_iterations=25,initial_step_size=1)
+    optimizer = optimizers.ConjugateGradient(max_iterations=3500,min_step_size=1e-20,max_time=3600,line_searcher=line_searcher,verbosity=verb,log_verbosity=1)
     problem = pymanopt.Problem(M_opinf,cost_oi_fun,euclidean_gradient=grad_oi_fun)
     t1 = tlib.perf_counter()
     result = optimizer.run(problem,initial_point=initial_guess)
@@ -246,7 +255,12 @@ if run_opinf_gs:
 if run_nitrom:
     if rank == 0:
         print("\nTraining NiTROM Model...")
+    phi_ic = np.load('results/phi_pod.npy')
+    psi_ic = np.load('results/psi_pod.npy')
+    A_ic = np.load('results/A_pod.npy')
+    H_ic = np.load('results/H_pod.npy')
     init_point = (phi_ic, psi_ic, A_ic, H_ic)
+
     times = 10 * np.arange(1, 17, 1)
     all_iters_nit = []
     all_costs_nit = []
@@ -285,8 +299,9 @@ if run_nitrom:
             optimizer = optimizers.ConjugateGradient(max_iterations=max_iter,min_step_size=1e-20,max_time=3600,line_searcher=line_searcher,log_verbosity=1,verbosity=verb)
             result = optimizer.run(problem,initial_point=init_point)
 
-            all_iters_nit.append(result.log["iterations"]["iteration"])
-            all_costs_nit.append(result.log["iterations"]["cost"])
+            if rank == 0:
+                all_iters_nit.append(result.log["iterations"]["iteration"])
+                all_costs_nit.append(result.log["iterations"]["cost"])
 
             phi_nit = result.point[0]
             psi_nit = result.point[1]
@@ -314,8 +329,13 @@ if run_nitrom:
 if run_nitrom_gs:
     if rank == 0:
         print("\nTraining NiTROM (GS) Model...")
-    if use_ic:
-        init_point_gs = (phi_ic, psi_ic, Qhat_ic, Jhat_ic, Rhat_ic, Hhat_ic)
+    phi_ic = np.load('results/phi_pod.npy')
+    psi_ic = np.load('results/psi_pod.npy')
+    Qhat_ic = np.load('results/Qhat_oi_gs.npy')
+    Jhat_ic = np.load('results/Jhat_oi_gs.npy')
+    Rhat_ic = np.load('results/Rhat_oi_gs.npy')
+    Hhat_ic = np.load('results/Hhat_oi_gs.npy')
+    init_point_gs = (phi_ic, psi_ic, Qhat_ic, Jhat_ic, Rhat_ic, Hhat_ic)
 
     times = 10 * np.arange(1, 17, 1)
     all_iters_gasnit = []
@@ -346,7 +366,7 @@ if run_nitrom_gs:
             cost, grad, hess = nitrom_functions.create_objective_and_gradient(M_gasnitrom,opt_obj,pool,fom,**nitrom_kwargs)
             problem = pymanopt.Problem(M_gasnitrom,cost,euclidean_gradient=grad)
             
-            line_searcher = myAdaptiveLineSearcher(contraction_factor=0.5,sufficient_decrease=0.1,max_iterations=25,initial_step_size=1)
+            line_searcher = myAdaptiveLineSearcher(contraction_factor=0.5,sufficient_decrease=0.1,max_iterations=10,initial_step_size=1)
             optimizer = optimizers.ConjugateGradient(max_iterations=max_iter,min_step_size=1e-20,max_time=3600,line_searcher=line_searcher,log_verbosity=1,verbosity=verb)
 
             result = optimizer.run(problem,initial_point=init_point_gs)
@@ -356,8 +376,9 @@ if run_nitrom_gs:
             Qhat, Jhat, Rhat, Hhat = result.point[2:]
             A_nit_gs, H_nit_gs = construct_operators((Qhat, Jhat, Rhat, Hhat), poly_comp)[0]
 
-            all_iters_gasnit.append(result.log["iterations"]["iteration"])
-            all_costs_gasnit.append(result.log["iterations"]["cost"])
+            if rank == 0:
+                all_iters_gasnit.append(result.log["iterations"]["iteration"])
+                all_costs_gasnit.append(result.log["iterations"]["cost"])
 
             init_point_gs = (phi_nit_gs, psi_nit_gs, Qhat, Jhat, Rhat, Hhat)
 
@@ -370,6 +391,8 @@ if run_nitrom_gs:
                 np.save('results/Jhat_nit_gs.npy', Jhat)
                 np.save('results/Rhat_nit_gs.npy', Rhat)
                 np.save('results/Hhat_nit_gs.npy', Hhat)
+
+            pool.comm.barrier()
 
 
 
