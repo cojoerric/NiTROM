@@ -3,6 +3,8 @@ import scipy as sp
 from scipy.integrate import solve_ivp
 from string import ascii_lowercase as ascii
 import pymanopt
+import time as tlib
+
 
 from .utils import construct_operators, propagate_gradients
 
@@ -45,8 +47,11 @@ def create_objective_and_gradient(*args, **kwargs):
             # specified by the last snapshot in the training trajectory
             z0 = Psi.T@opt_obj.X[k,:,0]
             u = Psi.T@opt_obj.F[:,k]
+            t_start = tlib.perf_counter()
             sol = solve_ivp(opt_obj.evaluate_rom_rhs,[0,opt_obj.time[-1]],z0,\
                             method='RK45',t_eval=opt_obj.time,args=(u,) + tensors)
+            t_end = tlib.perf_counter()
+            print(f"[Rank {mpi_pool.rank}] cost: traj {k} integrated in {t_end - t_start:.4f}s | nfev: {sol.nfev}, status: {sol.status} ({sol.message})", flush=True)
             e = fom.compute_output(opt_obj.X[k,:,:]) - fom.compute_output(PhiF@sol.y)
             J += (1./opt_obj.weights[k])*np.trace(e.T@e)
         
@@ -98,12 +103,16 @@ def create_objective_and_gradient(*args, **kwargs):
         tlg, wlg = np.polynomial.legendre.leggauss(opt_obj.leggauss_deg)
         wlg = np.asarray(wlg)
         
+        import time as tlib
         for k in range (opt_obj.my_n_traj):
 
             z0 = Psi.T@opt_obj.X[k,:,0]
             u = Psi.T@opt_obj.F[:,k]
+            t_start = tlib.perf_counter()
             sol = solve_ivp(opt_obj.evaluate_rom_rhs,[0,opt_obj.time[-1]],z0,\
                             method='RK45',t_eval=opt_obj.time,args=(u,) + tensors)
+            t_end = tlib.perf_counter()
+            print(f"[Rank {mpi_pool.rank}] grad main-fwd: traj {k} integrated in {t_end - t_start:.4f}s | nfev: {sol.nfev}, status: {sol.status} ({sol.message})", flush=True)
             Z = sol.y
             e = fom.compute_output(opt_obj.X[k,:,:]) - fom.compute_output(PhiF@Z)
             alpha = opt_obj.weights[k]
@@ -111,6 +120,11 @@ def create_objective_and_gradient(*args, **kwargs):
             lam_j_0 *= 0.0
             Int_lambda *= 0.0
             
+            sum_sol_j_time = 0.0
+            sum_sol_j_nfev = 0
+            sum_sol_lam_time = 0.0
+            sum_sol_lam_nfev = 0
+
             for j in range (opt_obj.n_snapshots - 1):
         
                 ej = e[:,opt_obj.n_snapshots - j - 1]
@@ -136,19 +150,31 @@ def create_objective_and_gradient(*args, **kwargs):
                     print(time_rom_j[-1],tf_j)
                     raise ValueError("Error in euclidean_gradient() - final time is not correct!")
                 
+                t_j_start = tlib.perf_counter()
                 sol_j = solve_ivp(opt_obj.evaluate_rom_rhs,[t0_j,tf_j],z0_j,method='RK45',\
                                   t_eval=time_rom_j,args=(u,) + tensors)
+                t_j_end = tlib.perf_counter()
+                sum_sol_j_time += t_j_end - t_j_start
+                sum_sol_j_nfev += sol_j.nfev
+
                 Z_j = np.fliplr(sol_j.y)
                 fZ = sp.interpolate.interp1d(time_rom_j,Z_j,kind='linear',fill_value='extrapolate')
                 # --------------------------------------------------------------------------
 
                 # ------ Compute the adj ROM solution between times t0_j and tf_j ----------
                 lam_j_0 += (2/alpha)*PhiF.T@Ctej
+                t_lam_start = tlib.perf_counter()
                 sol_lam = solve_ivp(opt_obj.evaluate_rom_adjoint,[t0_j,tf_j],lam_j_0,\
                                     method='RK45',t_eval=time_rom_j,args=(fZ,) + tensors)
+                t_lam_end = tlib.perf_counter()
+                sum_sol_lam_time += t_lam_end - t_lam_start
+                sum_sol_lam_nfev += sol_lam.nfev
+
                 Lam = np.fliplr(sol_lam.y)
                 lam_j_0 = Lam[:,0]
                 Z_j = np.fliplr(Z_j)
+            
+                print(f"[Rank {mpi_pool.rank}] grad short-fwd/adj: traj {k} processed (short-fwd: {sum_sol_j_time:.4f}s/{sum_sol_j_nfev} evals, adj: {sum_sol_lam_time:.4f}s/{sum_sol_lam_nfev} evals)", flush=True)
                 # --------------------------------------------------------------------------
                 
                 # Interpolate Z_j and Lam onto Gauss-Legendre points
@@ -190,10 +216,16 @@ def create_objective_and_gradient(*args, **kwargs):
             A = tensors[idx]
             
             time_pen = np.linspace(0,opt_obj.pen_tf,opt_obj.n_snapshots*opt_obj.nsave_rom)
-            Z = (solve_ivp(lambda t,z: A@z if np.linalg.norm(z) < 1e4 else 0*z,\
-                           [0,time_pen[-1]],opt_obj.randic,method='RK45',t_eval=time_pen)).y
-            Mu = (solve_ivp(lambda t,z: A.T@z if np.linalg.norm(z) < 1e4 else 0*z,\
-                           [0,time_pen[-1]],-2*opt_obj.l2_pen*Z[:,-1],method='RK45',t_eval=time_pen)).y
+            t_pen_start = tlib.perf_counter()
+            sol_Z = solve_ivp(lambda t,z: A@z if np.linalg.norm(z) < 1e4 else 0*z,\
+                           [0,time_pen[-1]],opt_obj.randic,method='RK45',t_eval=time_pen)
+            Z = sol_Z.y
+            t_pen_mid = tlib.perf_counter()
+            sol_Mu = solve_ivp(lambda t,z: A.T@z if np.linalg.norm(z) < 1e4 else 0*z,\
+                           [0,time_pen[-1]],-2*opt_obj.l2_pen*Z[:,-1],method='RK45',t_eval=time_pen)
+            Mu = sol_Mu.y
+            t_pen_end = tlib.perf_counter()
+            print(f"[Rank {mpi_pool.rank}] penalty: Z integrated in {t_pen_mid - t_pen_start:.4f}s ({sol_Z.nfev} evals), Mu integrated in {t_pen_end - t_pen_mid:.4f}s ({sol_Mu.nfev} evals)", flush=True)
             Mu = np.fliplr(Mu)
             
             
