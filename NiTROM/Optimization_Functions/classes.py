@@ -194,6 +194,22 @@ class optimization_objects:
                 'forcing_interp':   a scipy interpolator f that gives us a forcing f(t)
         """
         
+        if not hasattr(self, 'eval_counter'):
+            self.eval_counter = 0
+        self.eval_counter += 1
+        
+        if not hasattr(self, 'last_t') or self.eval_counter == 1:
+            self.last_t = t
+            dt = 0.0
+        else:
+            dt = t - self.last_t
+            self.last_t = t
+
+        if self.eval_counter % 2000 == 0:
+            from mpi4py import MPI
+            rank = MPI.COMM_WORLD.Get_rank()
+            print(f"[Rank {rank}] RHS evals: {self.eval_counter} | t: {t:.8e} | dt: {dt:.3e} | norm(z): {np.linalg.norm(z):.4e}", flush=True)
+
         if np.linalg.norm(z) >= 1e4:    
             dzdt = 0.0*z 
         else:
@@ -219,6 +235,22 @@ class optimization_objects:
             operators:  (A2,A3,A4,...)
         """
         
+        if not hasattr(self, 'adj_eval_counter'):
+            self.adj_eval_counter = 0
+        self.adj_eval_counter += 1
+        
+        if not hasattr(self, 'adj_last_t') or self.adj_eval_counter == 1:
+            self.adj_last_t = t
+            dt = 0.0
+        else:
+            dt = t - self.adj_last_t
+            self.adj_last_t = t
+            
+        if self.adj_eval_counter % 2000 == 0:
+            from mpi4py import MPI
+            rank = MPI.COMM_WORLD.Get_rank()
+            print(f"[Rank {rank}] ADJ evals: {self.adj_eval_counter} | t: {t:.8e} | dt: {dt:.3e} | norm(z): {np.linalg.norm(z):.4e}", flush=True)
+
         if np.linalg.norm(z) >= 1e4:
             dzdt = 0.0*z
         else:
