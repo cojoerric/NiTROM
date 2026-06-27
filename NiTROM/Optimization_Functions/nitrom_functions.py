@@ -8,6 +8,10 @@ import time as tlib
 
 from .utils import construct_operators, propagate_gradients
 
+def rom_blowup_event(t, z, *args):
+    return 1e4 - np.linalg.norm(z)
+rom_blowup_event.terminal = True
+
 
 def create_objective_and_gradient(*args, **kwargs):
     
@@ -50,10 +54,15 @@ def create_objective_and_gradient(*args, **kwargs):
             t_start = tlib.perf_counter()
             print(f"[Rank {mpi_pool.rank}] cost: traj {k} integration starting...", flush=True)
             sol = solve_ivp(opt_obj.evaluate_rom_rhs,[0,opt_obj.time[-1]],z0,\
-                            method='RK45',t_eval=opt_obj.time,args=(u,) + tensors)
+                            method='RK45',t_eval=opt_obj.time,args=(u,) + tensors, events=rom_blowup_event)
             t_end = tlib.perf_counter()
             print(f"[Rank {mpi_pool.rank}] cost: traj {k} integrated in {t_end - t_start:.4f}s | nfev: {sol.nfev}, status: {sol.status} ({sol.message})", flush=True)
-            e = fom.compute_output(opt_obj.X[k,:,:]) - fom.compute_output(PhiF@sol.y)
+            y = sol.y
+            if y.shape[1] < len(opt_obj.time):
+                print(f"[Rank {mpi_pool.rank}] WARNING: cost traj {k} blew up (norm > 1e4) and was truncated at step {y.shape[1]} / {len(opt_obj.time)}!", flush=True)
+                padding = np.repeat(y[:, -1:], len(opt_obj.time) - y.shape[1], axis=1)
+                y = np.hstack((y, padding))
+            e = fom.compute_output(opt_obj.X[k,:,:]) - fom.compute_output(PhiF@y)
             J += (1./opt_obj.weights[k])*np.trace(e.T@e)
         
         if opt_obj.l2_pen != None and mpi_pool.rank == 0:
@@ -112,10 +121,14 @@ def create_objective_and_gradient(*args, **kwargs):
             t_start = tlib.perf_counter()
             print(f"[Rank {mpi_pool.rank}] grad main-fwd: traj {k} integration starting...", flush=True)
             sol = solve_ivp(opt_obj.evaluate_rom_rhs,[0,opt_obj.time[-1]],z0,\
-                            method='RK45',t_eval=opt_obj.time,args=(u,) + tensors)
+                            method='RK45',t_eval=opt_obj.time,args=(u,) + tensors, events=rom_blowup_event)
             t_end = tlib.perf_counter()
             print(f"[Rank {mpi_pool.rank}] grad main-fwd: traj {k} integrated in {t_end - t_start:.4f}s | nfev: {sol.nfev}, status: {sol.status} ({sol.message})", flush=True)
             Z = sol.y
+            if Z.shape[1] < len(opt_obj.time):
+                print(f"[Rank {mpi_pool.rank}] WARNING: grad fwd traj {k} blew up (norm > 1e4) and was truncated at step {Z.shape[1]} / {len(opt_obj.time)}!", flush=True)
+                padding = np.repeat(Z[:, -1:], len(opt_obj.time) - Z.shape[1], axis=1)
+                Z = np.hstack((Z, padding))
             e = fom.compute_output(opt_obj.X[k,:,:]) - fom.compute_output(PhiF@Z)
             alpha = opt_obj.weights[k]
             
@@ -155,12 +168,17 @@ def create_objective_and_gradient(*args, **kwargs):
                 
                 t_j_start = tlib.perf_counter()
                 sol_j = solve_ivp(opt_obj.evaluate_rom_rhs,[t0_j,tf_j],z0_j,method='RK45',\
-                                  t_eval=time_rom_j,args=(u,) + tensors)
+                                  t_eval=time_rom_j,args=(u,) + tensors, events=rom_blowup_event)
                 t_j_end = tlib.perf_counter()
                 sum_sol_j_time += t_j_end - t_j_start
                 sum_sol_j_nfev += sol_j.nfev
 
-                Z_j = np.fliplr(sol_j.y)
+                Z_j = sol_j.y
+                if Z_j.shape[1] < len(time_rom_j):
+                    print(f"[Rank {mpi_pool.rank}] WARNING: grad short-fwd traj {k} snapshot {j} blew up and was truncated at step {Z_j.shape[1]} / {len(time_rom_j)}!", flush=True)
+                    padding = np.repeat(Z_j[:, -1:], len(time_rom_j) - Z_j.shape[1], axis=1)
+                    Z_j = np.hstack((Z_j, padding))
+                Z_j = np.fliplr(Z_j)
                 fZ = sp.interpolate.interp1d(time_rom_j,Z_j,kind='linear',fill_value='extrapolate')
                 # --------------------------------------------------------------------------
 
@@ -168,12 +186,17 @@ def create_objective_and_gradient(*args, **kwargs):
                 lam_j_0 += (2/alpha)*PhiF.T@Ctej
                 t_lam_start = tlib.perf_counter()
                 sol_lam = solve_ivp(opt_obj.evaluate_rom_adjoint,[t0_j,tf_j],lam_j_0,\
-                                    method='RK45',t_eval=time_rom_j,args=(fZ,) + tensors)
+                                    method='RK45',t_eval=time_rom_j,args=(fZ,) + tensors, events=rom_blowup_event)
                 t_lam_end = tlib.perf_counter()
                 sum_sol_lam_time += t_lam_end - t_lam_start
                 sum_sol_lam_nfev += sol_lam.nfev
 
-                Lam = np.fliplr(sol_lam.y)
+                Lam = sol_lam.y
+                if Lam.shape[1] < len(time_rom_j):
+                    print(f"[Rank {mpi_pool.rank}] WARNING: grad short-adj traj {k} snapshot {j} blew up and was truncated at step {Lam.shape[1]} / {len(time_rom_j)}!", flush=True)
+                    padding = np.repeat(Lam[:, -1:], len(time_rom_j) - Lam.shape[1], axis=1)
+                    Lam = np.hstack((Lam, padding))
+                Lam = np.fliplr(Lam)
                 lam_j_0 = Lam[:,0]
                 Z_j = np.fliplr(Z_j)
             
@@ -220,13 +243,21 @@ def create_objective_and_gradient(*args, **kwargs):
             
             time_pen = np.linspace(0,opt_obj.pen_tf,opt_obj.n_snapshots*opt_obj.nsave_rom)
             t_pen_start = tlib.perf_counter()
-            sol_Z = solve_ivp(lambda t,z: A@z if np.linalg.norm(z) < 1e4 else 0*z,\
-                           [0,time_pen[-1]],opt_obj.randic,method='RK45',t_eval=time_pen)
+            sol_Z = solve_ivp(lambda t,z: A@z,\
+                           [0,time_pen[-1]],opt_obj.randic,method='RK45',t_eval=time_pen, events=rom_blowup_event)
             Z = sol_Z.y
+            if Z.shape[1] < len(time_pen):
+                print(f"[Rank {mpi_pool.rank}] WARNING: penalty Z blew up and was truncated at step {Z.shape[1]} / {len(time_pen)}!", flush=True)
+                padding = np.repeat(Z[:, -1:], len(time_pen) - Z.shape[1], axis=1)
+                Z = np.hstack((Z, padding))
             t_pen_mid = tlib.perf_counter()
-            sol_Mu = solve_ivp(lambda t,z: A.T@z if np.linalg.norm(z) < 1e4 else 0*z,\
-                           [0,time_pen[-1]],-2*opt_obj.l2_pen*Z[:,-1],method='RK45',t_eval=time_pen)
+            sol_Mu = solve_ivp(lambda t,z: A.T@z,\
+                           [0,time_pen[-1]],-2*opt_obj.l2_pen*Z[:,-1],method='RK45',t_eval=time_pen, events=rom_blowup_event)
             Mu = sol_Mu.y
+            if Mu.shape[1] < len(time_pen):
+                print(f"[Rank {mpi_pool.rank}] WARNING: penalty Mu blew up and was truncated at step {Mu.shape[1]} / {len(time_pen)}!", flush=True)
+                padding = np.repeat(Mu[:, -1:], len(time_pen) - Mu.shape[1], axis=1)
+                Mu = np.hstack((Mu, padding))
             t_pen_end = tlib.perf_counter()
             print(f"[Rank {mpi_pool.rank}] penalty: Z integrated in {t_pen_mid - t_pen_start:.4f}s ({sol_Z.nfev} evals), Mu integrated in {t_pen_end - t_pen_mid:.4f}s ({sol_Mu.nfev} evals)", flush=True)
             Mu = np.fliplr(Mu)
