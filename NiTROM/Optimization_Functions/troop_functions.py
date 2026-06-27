@@ -29,7 +29,9 @@ def create_objective_and_gradient(manifold,opt_obj,mpi_pool,fom):
             e = fom.compute_output(opt_obj.X[k,:,:]) - fom.compute_output(PhiF@sol.y)
             J += (1./opt_obj.weights[k])*np.trace(e.T@e)
         
-        return np.sum(np.asarray(mpi_pool.comm.allgather(J)))
+        J = np.sum(np.asarray(mpi_pool.comm.allgather(J)))
+        J = mpi_pool.comm.bcast(J, root=0)
+        return J
 
     @pymanopt.function.numpy(manifold)
     def euclidean_gradient(Phi,Psi): 
@@ -149,6 +151,8 @@ def create_objective_and_gradient(manifold,opt_obj,mpi_pool,fom):
         grad_Phi = sum(mpi_pool.comm.allgather(grad_Phi))
         grad_Psi = sum(mpi_pool.comm.allgather(grad_Psi))
 
+        grad_Phi = mpi_pool.comm.bcast(grad_Phi, root=0)
+        grad_Psi = mpi_pool.comm.bcast(grad_Psi, root=0)
         
         return grad_Phi, grad_Psi
 

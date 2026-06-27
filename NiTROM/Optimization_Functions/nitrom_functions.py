@@ -59,6 +59,7 @@ def create_objective_and_gradient(*args, **kwargs):
             J += opt_obj.l2_pen*np.dot(Z[:,-1],Z[:,-1])
             
         J = np.sum(np.asarray(mpi_pool.comm.allgather(J)))
+        J = mpi_pool.comm.bcast(J, root=0)
         
         return J
 
@@ -233,6 +234,11 @@ def create_objective_and_gradient(*args, **kwargs):
             grad_Psi = sum(mpi_pool.comm.allgather(grad_Psi))
             for k in range (len(grad_tensors)):
                 grad_tensors[k] = sum(mpi_pool.comm.allgather(grad_tensors[k]))
+
+        grad_Phi = mpi_pool.comm.bcast(grad_Phi, root=0)
+        grad_Psi = mpi_pool.comm.bcast(grad_Psi, root=0)
+        for k in range (len(grad_tensors)):
+            grad_tensors[k] = mpi_pool.comm.bcast(grad_tensors[k], root=0)
 
         if glob_stable:
             grad_tensors_new = propagate_gradients(grad_tensors, other_tensors, tensors_old, poly_comp)
