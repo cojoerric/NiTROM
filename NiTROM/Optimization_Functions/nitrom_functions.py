@@ -48,6 +48,7 @@ def create_objective_and_gradient(*args, **kwargs):
             z0 = Psi.T@opt_obj.X[k,:,0]
             u = Psi.T@opt_obj.F[:,k]
             t_start = tlib.perf_counter()
+            print(f"[Rank {mpi_pool.rank}] cost: traj {k} integration starting...", flush=True)
             sol = solve_ivp(opt_obj.evaluate_rom_rhs,[0,opt_obj.time[-1]],z0,\
                             method='RK45',t_eval=opt_obj.time,args=(u,) + tensors)
             t_end = tlib.perf_counter()
@@ -109,6 +110,7 @@ def create_objective_and_gradient(*args, **kwargs):
             z0 = Psi.T@opt_obj.X[k,:,0]
             u = Psi.T@opt_obj.F[:,k]
             t_start = tlib.perf_counter()
+            print(f"[Rank {mpi_pool.rank}] grad main-fwd: traj {k} integration starting...", flush=True)
             sol = solve_ivp(opt_obj.evaluate_rom_rhs,[0,opt_obj.time[-1]],z0,\
                             method='RK45',t_eval=opt_obj.time,args=(u,) + tensors)
             t_end = tlib.perf_counter()
@@ -125,6 +127,7 @@ def create_objective_and_gradient(*args, **kwargs):
             sum_sol_lam_time = 0.0
             sum_sol_lam_nfev = 0
 
+            print(f"[Rank {mpi_pool.rank}] grad snapshot loops starting for traj {k}...", flush=True)
             for j in range (opt_obj.n_snapshots - 1):
         
                 ej = e[:,opt_obj.n_snapshots - j - 1]
