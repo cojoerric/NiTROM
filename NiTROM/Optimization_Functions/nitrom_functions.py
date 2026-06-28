@@ -53,7 +53,7 @@ def create_objective_and_gradient(*args, **kwargs):
             u = Psi.T@opt_obj.F[:,k]
             opt_obj.eval_counter = 0
             sol = solve_ivp(opt_obj.evaluate_rom_rhs,[0,opt_obj.time[-1]],z0,\
-                            method='RK45',t_eval=opt_obj.time,args=(u,) + tensors, events=rom_blowup_event)
+                            method='LSODA',t_eval=opt_obj.time,args=(u,) + tensors, events=rom_blowup_event)
             y = sol.y
             if y.shape[1] < len(opt_obj.time):
                 padding = np.repeat(y[:, -1:], len(opt_obj.time) - y.shape[1], axis=1)
@@ -116,7 +116,7 @@ def create_objective_and_gradient(*args, **kwargs):
             u = Psi.T@opt_obj.F[:,k]
             opt_obj.eval_counter = 0
             sol = solve_ivp(opt_obj.evaluate_rom_rhs,[0,opt_obj.time[-1]],z0,\
-                            method='RK45',t_eval=opt_obj.time,args=(u,) + tensors, events=rom_blowup_event)
+                            method='LSODA',t_eval=opt_obj.time,args=(u,) + tensors, events=rom_blowup_event)
             Z = sol.y
             if Z.shape[1] < len(opt_obj.time):
                 padding = np.repeat(Z[:, -1:], len(opt_obj.time) - Z.shape[1], axis=1)
@@ -132,7 +132,6 @@ def create_objective_and_gradient(*args, **kwargs):
             sum_sol_lam_time = 0.0
             sum_sol_lam_nfev = 0
 
-            print(f"[Rank {mpi_pool.rank}] grad snapshot loops starting for traj {k}...", flush=True)
             for j in range (opt_obj.n_snapshots - 1):
         
                 ej = e[:,opt_obj.n_snapshots - j - 1]
@@ -158,7 +157,7 @@ def create_objective_and_gradient(*args, **kwargs):
                     raise ValueError("Error in euclidean_gradient() - final time is not correct!")
                 
                 opt_obj.eval_counter = 0
-                sol_j = solve_ivp(opt_obj.evaluate_rom_rhs,[t0_j,tf_j],z0_j,method='RK45',\
+                sol_j = solve_ivp(opt_obj.evaluate_rom_rhs,[t0_j,tf_j],z0_j,method='LSODA',\
                                   t_eval=time_rom_j,args=(u,) + tensors, events=rom_blowup_event)
                 Z_j = sol_j.y
                 if Z_j.shape[1] < len(time_rom_j):
@@ -172,7 +171,7 @@ def create_objective_and_gradient(*args, **kwargs):
                 lam_j_0 += (2/alpha)*PhiF.T@Ctej
                 opt_obj.adj_eval_counter = 0
                 sol_lam = solve_ivp(opt_obj.evaluate_rom_adjoint,[t0_j,tf_j],lam_j_0,\
-                                    method='RK45',t_eval=time_rom_j,args=(fZ,) + tensors, events=rom_blowup_event)
+                                    method='LSODA',t_eval=time_rom_j,args=(fZ,) + tensors, events=rom_blowup_event)
                 Lam = sol_lam.y
                 if Lam.shape[1] < len(time_rom_j):
                     padding = np.repeat(Lam[:, -1:], len(time_rom_j) - Lam.shape[1], axis=1)
@@ -223,14 +222,14 @@ def create_objective_and_gradient(*args, **kwargs):
             time_pen = np.linspace(0,opt_obj.pen_tf,opt_obj.n_snapshots*opt_obj.nsave_rom)
             opt_obj.eval_counter = 0
             sol_Z = solve_ivp(lambda t,z: A@z,\
-                           [0,time_pen[-1]],opt_obj.randic,method='RK45',t_eval=time_pen, events=rom_blowup_event)
+                           [0,time_pen[-1]],opt_obj.randic,method='LSODA',t_eval=time_pen, events=rom_blowup_event)
             Z = sol_Z.y
             if Z.shape[1] < len(time_pen):
                 padding = np.repeat(Z[:, -1:], len(time_pen) - Z.shape[1], axis=1)
                 Z = np.hstack((Z, padding))
             opt_obj.adj_eval_counter = 0
             sol_Mu = solve_ivp(lambda t,z: A.T@z,\
-                           [0,time_pen[-1]],-2*opt_obj.l2_pen*Z[:,-1],method='RK45',t_eval=time_pen, events=rom_blowup_event)
+                           [0,time_pen[-1]],-2*opt_obj.l2_pen*Z[:,-1],method='LSODA',t_eval=time_pen, events=rom_blowup_event)
             Mu = sol_Mu.y
             if Mu.shape[1] < len(time_pen):
                 padding = np.repeat(Mu[:, -1:], len(time_pen) - Mu.shape[1], axis=1)
