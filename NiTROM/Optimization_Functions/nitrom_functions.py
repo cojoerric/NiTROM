@@ -51,7 +51,6 @@ def create_objective_and_gradient(*args, **kwargs):
             # specified by the last snapshot in the training trajectory
             z0 = Psi.T@opt_obj.X[k,:,0]
             u = Psi.T@opt_obj.F[:,k]
-            opt_obj.eval_counter = 0
             sol = solve_ivp(opt_obj.evaluate_rom_rhs,[0,opt_obj.time[-1]],z0,\
                             method='LSODA',t_eval=opt_obj.time,args=(u,) + tensors, events=rom_blowup_event)
             y = sol.y
@@ -114,7 +113,6 @@ def create_objective_and_gradient(*args, **kwargs):
 
             z0 = Psi.T@opt_obj.X[k,:,0]
             u = Psi.T@opt_obj.F[:,k]
-            opt_obj.eval_counter = 0
             sol = solve_ivp(opt_obj.evaluate_rom_rhs,[0,opt_obj.time[-1]],z0,\
                             method='LSODA',t_eval=opt_obj.time,args=(u,) + tensors, events=rom_blowup_event)
             Z = sol.y
@@ -156,7 +154,6 @@ def create_objective_and_gradient(*args, **kwargs):
                 if np.abs(time_rom_j[-1] - tf_j) >= 1e-10:
                     raise ValueError("Error in euclidean_gradient() - final time is not correct!")
                 
-                opt_obj.eval_counter = 0
                 sol_j = solve_ivp(opt_obj.evaluate_rom_rhs,[t0_j,tf_j],z0_j,method='LSODA',\
                                   t_eval=time_rom_j,args=(u,) + tensors, events=rom_blowup_event)
                 Z_j = sol_j.y
@@ -169,7 +166,6 @@ def create_objective_and_gradient(*args, **kwargs):
 
                 # ------ Compute the adj ROM solution between times t0_j and tf_j ----------
                 lam_j_0 += (2/alpha)*PhiF.T@Ctej
-                opt_obj.adj_eval_counter = 0
                 sol_lam = solve_ivp(opt_obj.evaluate_rom_adjoint,[t0_j,tf_j],lam_j_0,\
                                     method='LSODA',t_eval=time_rom_j,args=(fZ,) + tensors, events=rom_blowup_event)
                 Lam = sol_lam.y
@@ -220,14 +216,12 @@ def create_objective_and_gradient(*args, **kwargs):
             A = tensors[idx]
             
             time_pen = np.linspace(0,opt_obj.pen_tf,opt_obj.n_snapshots*opt_obj.nsave_rom)
-            opt_obj.eval_counter = 0
             sol_Z = solve_ivp(lambda t,z: A@z,\
                            [0,time_pen[-1]],opt_obj.randic,method='LSODA',t_eval=time_pen, events=rom_blowup_event)
             Z = sol_Z.y
             if Z.shape[1] < len(time_pen):
                 padding = np.repeat(Z[:, -1:], len(time_pen) - Z.shape[1], axis=1)
                 Z = np.hstack((Z, padding))
-            opt_obj.adj_eval_counter = 0
             sol_Mu = solve_ivp(lambda t,z: A.T@z,\
                            [0,time_pen[-1]],-2*opt_obj.l2_pen*Z[:,-1],method='LSODA',t_eval=time_pen, events=rom_blowup_event)
             Mu = sol_Mu.y
