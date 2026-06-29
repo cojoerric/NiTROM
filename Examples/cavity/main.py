@@ -300,8 +300,8 @@ if run_nitrom:
             result = optimizer.run(problem,initial_point=init_point)
 
             if rank == 0:
-                all_iters_nit.append(result.log["iterations"]["iteration"])
-                all_costs_nit.append(result.log["iterations"]["cost"])
+                all_iters_nit.extend(result.log["iterations"]["iteration"])
+                all_costs_nit.extend(result.log["iterations"]["cost"])
 
             phi_nit = result.point[0]
             psi_nit = result.point[1]
@@ -382,8 +382,8 @@ if run_nitrom_gs:
             A_nit_gs, H_nit_gs = construct_operators((Qhat, Jhat, Rhat, Hhat), poly_comp)[0]
 
             if rank == 0:
-                all_iters_gasnit.append(result.log["iterations"]["iteration"])
-                all_costs_gasnit.append(result.log["iterations"]["cost"])
+                all_iters_gasnit.extend(result.log["iterations"]["iteration"])
+                all_costs_gasnit.extend(result.log["iterations"]["cost"])
 
             init_point_gs = (phi_nit_gs, psi_nit_gs, Qhat, Jhat, Rhat, Hhat)
 
