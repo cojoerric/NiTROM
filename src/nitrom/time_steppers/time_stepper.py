@@ -104,7 +104,7 @@ def solve_ivp(
     # and then we linearly interpolate the solution at the requested
     # time points.
     dteval_min = torch.min(t_eval[1:] - t_eval[:-1])
-    save_every = int(torch.round(dteval_min / dt).item())
+    save_every = max(int(torch.round(dteval_min / dt).item()), 1)
     tsave = tsim[::save_every]
     n_save = len(tsave)
 

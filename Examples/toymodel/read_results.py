@@ -5,6 +5,7 @@ import torch
 
 from nitrom.latent_space_models.polynomial_model import PolynomialModel
 from nitrom.plotting import COLORS, set_plot_style
+from nitrom.projections.linear_projection import LinearProjection
 from nitrom.time_steppers.time_stepper import solve_ivp
 
 set_plot_style()
@@ -42,14 +43,24 @@ def load_rom(fname):
         tensors=ckpt["tensors"],
         forcing_config=ckpt["forcing_config"],
     )
-    return rom, ckpt["Phi"].to(device=device, dtype=dtype)
+    Phi = ckpt["Phi"].to(device=device, dtype=dtype)
+    Psi = ckpt.get("Psi", ckpt["Phi"]).to(device=device, dtype=dtype)
+    return rom, Phi, Psi
 
 
-models = {
-    r"POD-Galerkin": (load_rom("galerkin_model.pt"), COLORS["galerkin"], "solid"),
-    r"OpInf": (load_rom("opinf_model.pt"), COLORS["opinf"], "dotted"),
-    r"GAS-OpInf": (load_rom("gas_opinf_model.pt"), COLORS["gas"], "dashed"),
-}
+models = {}
+available_models = [
+    (r"POD-Galerkin", "galerkin_model.pt", COLORS["galerkin"], "solid"),
+    (r"OpInf", "opinf_model.pt", COLORS["opinf"], "dotted"),
+    (r"GAS-OpInf", "gas_opinf_model.pt", COLORS["gas"], "dashed"),
+    (r"NiTROM", "nitrom_model.pt", "#e78ac3", "dashdot"),
+    (r"GAS-NiTROM", "gas_nitrom_model.pt", "#a6d854", (0, (3, 1, 1, 1))),
+]
+
+for label, fname, color, style in available_models:
+    path = os.path.join(models_dir, fname)
+    if os.path.exists(path):
+        models[label] = (load_rom(fname), color, style)
 
 # %% Random step-response trajectories (constant forcing u = b), batched.
 # Initial condition is x(0) = 0, as in the training data (generate_data.py);
@@ -87,13 +98,16 @@ alpha = torch.linalg.vector_norm(x_ss @ C.T, dim=1) ** 2  # (n_test,)
 
 # e(t) = (1/N) sum_j ||y_j(t) - yhat_j(t)||^2 / alpha_j
 avg_error = {}
-for name, ((rom, Phi), _color, _style) in models.items():
+for name, ((rom, Phi, Psi), _color, _style) in models.items():
     z0 = torch.zeros(n_test, Phi.shape[1], device=device, dtype=dtype)
     Z_rom = solve_ivp(
         rom.evaluate_rhs, z0, t0, tf, dt_sub, time, "rk4",
         external_forcing=forcing_fns,
     )
-    X_rom = torch.einsum("nr,brt->bnt", Phi, Z_rom)  # (n_test, n, nt)
+    proj = LinearProjection([Phi, Psi])
+    Z_flat = Z_rom.permute(0, 2, 1).reshape(-1, Phi.shape[1])
+    X_flat = proj.decode(Z_flat)
+    X_rom = X_flat.reshape(n_test, len(time), -1).permute(0, 2, 1)
     Y_rom = torch.einsum("on,bnt->bot", C, X_rom)  # ROM output (n_test, n_out, nt)
     sq_err = torch.linalg.vector_norm(Y_fom - Y_rom, dim=1) ** 2  # (n_test, nt)
     avg_error[name] = (sq_err / alpha[:, None]).mean(dim=0)  # (nt,)

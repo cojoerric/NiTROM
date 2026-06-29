@@ -165,6 +165,7 @@ cython_debug/
 *.dat
 *.dat.info
 *.csv
+*.pkl
 
 # Ignore all folders data/ and results/
 **/data/

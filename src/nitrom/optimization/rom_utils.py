@@ -1,7 +1,7 @@
 import torch
 
 
-def create_intitial_guess(A, H=None, r=None):
+def create_initial_guess(A, H=None, r=None):
     """
     Build initialization tensors for the globally stable model from A (and optional H).
     The construction uses Q = I, J = skew(A), R = -sym(A) projected to PSD, and Hhat = 0.5 * H.

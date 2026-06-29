@@ -4,6 +4,40 @@ import torch.distributed as dist
 from .modules.base import InferenceModule
 
 
+def _project_tangent(X: torch.Tensor, G: torch.Tensor, manifold: str) -> torch.Tensor:
+    """Project Euclidean gradient G onto the tangent space at X."""
+    if manifold == "grassmann":
+        return G - X @ (X.T @ G)
+    elif manifold == "stiefel":
+        XtG = X.T @ G
+        sym_XtG = 0.5 * (XtG + XtG.T)
+        return G - X @ sym_XtG
+    return G
+
+
+def _retract(X: torch.Tensor) -> torch.Tensor:
+    """Retract matrix X to the Stiefel/Grassmann manifold using QR decomposition."""
+    Q, R = torch.linalg.qr(X)
+    d = torch.diagonal(R, dim1=-2, dim2=-1)
+    ph = d.sign()
+    ph[ph == 0] = 1.0
+    return Q * ph.unsqueeze(-2)
+
+
+def _transport_optimizer_states(optimizer, model, manifold_types) -> None:
+    """Transport momentum buffers in optimizer state to the new tangent spaces."""
+    for name, param in model.named_parameters():
+        if name in manifold_types:
+            state = optimizer.state.get(param)
+            if state is None:
+                continue
+            for key in ["exp_avg", "momentum_buffer"]:
+                if key in state:
+                    buf = state[key]
+                    proj_buf = _project_tangent(param, buf, manifold_types[name])
+                    buf.copy_(proj_buf)
+
+
 def train(
     model: InferenceModule,
     n_epochs: int = 1000,
@@ -12,6 +46,7 @@ def train(
     print_every: int = 100,
     tol: float = 1e-10,
     n_restarts: int = 0,
+    manifold_types: dict[str, str] | None = None,
 ) -> InferenceModule:
     r"""
     Train an :class:`InferenceModule` by minimizing its cost using the
@@ -50,11 +85,46 @@ def train(
         a restart no longer reduces the loss or the restart budget is spent.
         ``0`` (default) reproduces the plain stop-on-stall behavior.
     :type n_restarts: int
+    :param manifold_types: dict mapping parameter names to their manifold type,
+        e.g., ``{"Phi": "grassmann", "Psi": "stiefel"}``. If ``None`` or empty,
+        parameters are determined by the type of inference module.
+    :type manifold_types: dict[str, str] or None
     :returns: the trained model
     :rtype: InferenceModule
     """
     is_distributed = dist.is_initialized()
     rank = dist.get_rank() if is_distributed else 0
+
+    # Validate and normalize manifold types
+    valid_manifolds = {"grassmann", "stiefel", "euclidean"}
+    model_param_names = {name for name, _ in model.named_parameters()}
+
+    # Automatically configure Phi to Grassmann and Psi to Stiefel for NitromModule
+    default_manifold_types = {}
+    if type(model).__name__ == "NitromModule":
+        if "Phi" in model_param_names:
+            default_manifold_types["Phi"] = "grassmann"
+        if "Psi" in model_param_names:
+            default_manifold_types["Psi"] = "stiefel"
+
+    # Merge user settings, prioritizing user inputs
+    user_manifold_types = manifold_types if manifold_types is not None else {}
+    combined_manifold_types = {**default_manifold_types, **user_manifold_types}
+
+    normalized_manifold_types = {}
+    for name, mtype in combined_manifold_types.items():
+        if name not in model_param_names:
+            raise ValueError(
+                f"Parameter '{name}' specified in manifold_types does not exist in the model."
+            )
+        mtype_lower = mtype.lower()
+        if mtype_lower not in valid_manifolds:
+            raise ValueError(
+                f"Manifold type for parameter '{name}' must be one of {valid_manifolds}, "
+                f"got '{mtype}'"
+            )
+        if mtype_lower != "euclidean":
+            normalized_manifold_types[name] = mtype_lower
 
     # Synchronize parameters across ranks so every process starts the
     # data-parallel run from identical weights.  The all-reduced gradient is
@@ -74,7 +144,7 @@ def train(
             return torch.optim.LBFGS(
                 model.parameters(),
                 lr=lr,
-                max_iter=20,
+                max_iter=10,
                 line_search_fn="strong_wolfe",
             )
         raise ValueError(
@@ -86,6 +156,12 @@ def train(
 
     def _compute_and_assign_grads() -> torch.Tensor:
         """Evaluate cost, compute analytic gradients, and assign them."""
+        # Retract manifold parameters to the manifold before evaluating cost
+        with torch.no_grad():
+            for name, param in model.named_parameters():
+                if name in normalized_manifold_types:
+                    param.copy_(_retract(param))
+
         optimizer.zero_grad()
         loss = model()
         grads = model.gradient()
@@ -104,6 +180,14 @@ def train(
             # deadlock on the next collective.
             loss = loss.detach().clone()
             dist.all_reduce(loss, op=dist.ReduceOp.SUM)
+
+        # Project Euclidean gradients onto tangent spaces
+        with torch.no_grad():
+            for name, param in model.named_parameters():
+                if name in normalized_manifold_types and param.grad is not None:
+                    projected = _project_tangent(param, param.grad, normalized_manifold_types[name])
+                    param.grad.copy_(projected)
+
         return loss
 
     loss_prev = None
@@ -116,6 +200,17 @@ def train(
         else:
             loss = _compute_and_assign_grads()
             optimizer.step()
+
+        # Retract manifold parameters to the manifold after the step
+        with torch.no_grad():
+            for name, param in model.named_parameters():
+                if name in normalized_manifold_types:
+                    param.copy_(_retract(param))
+                    if is_distributed:
+                        dist.broadcast(param.data, src=0)
+
+        # Transport optimizer state buffers (exp_avg, momentum_buffer)
+        _transport_optimizer_states(optimizer, model, normalized_manifold_types)
 
         loss_val = loss.item()
         # Monitor: gradient norm at the current iterate (assigned param.grads).

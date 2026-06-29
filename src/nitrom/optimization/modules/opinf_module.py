@@ -62,7 +62,7 @@ class OpInfModule(InferenceModule):
         self.nt = nt
 
         # Weight matrix
-        W = (1 / training_data.weights).repeat_interleave(nt)
+        W = (1 / training_data.weights.view(-1)).repeat_interleave(nt)
         self.W = torch.diag(W)
 
         # Store forcing callables and time grid

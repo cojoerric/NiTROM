@@ -79,7 +79,7 @@ class PolyManifoldInfModule(InferenceModule):
         self.nt = nt
 
         # Weight matrix
-        W = (1.0 / training_data.weights).repeat_interleave(nt)
+        W = (1.0 / training_data.weights.view(-1)).repeat_interleave(nt)
         self.W = torch.diag(W)
 
         # Precompute encoded data: Z of shape (ntraj, r, nt)

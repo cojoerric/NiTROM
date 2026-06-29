@@ -179,7 +179,7 @@ class NitromModule(InferenceModule):
         e = self.fom.compute_output(self.training_data.X) - self.fom.compute_output(
             self._decode_trajectories(Z)
         )
-        J = torch.sum((e * e).sum(dim=(1, 2)) / self.weights)
+        J = torch.sum((e * e).sum(dim=(1, 2)) / self.weights.view(-1))
         return J
 
     def _vjp_rhs(
@@ -239,7 +239,7 @@ class NitromModule(InferenceModule):
             ntraj, _, nt = X.shape
             r = self.model.state_dimension
             ef = self.forcing_fns or None
-            w = (1.0 / self.weights).reshape(-1, 1, 1)  # (ntraj, 1, 1)
+            w = (1.0 / self.weights.view(-1)).reshape(-1, 1, 1)  # (ntraj, 1, 1)
 
             # --- forward solve at the measurement times --------------------
             z0 = self.projection.encode(X[:, :, 0])  # (ntraj, r)

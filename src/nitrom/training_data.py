@@ -141,7 +141,7 @@ class TrainingPool:
             weights = [np.load(f) for f in self.fnames_weights]
             self.weights = torch.tensor(
                 np.stack(weights), device=self.device, dtype=self.dtype
-            )
+            ).view(-1)
         else:
             self.weights = torch.ones(
                 self.my_n_traj, device=self.device, dtype=self.dtype
