@@ -5,12 +5,7 @@ from string import ascii_lowercase as ascii
 import pymanopt
 import time as tlib
 
-
 from .utils import construct_operators, propagate_gradients
-
-def rom_blowup_event(t, z, *args):
-    return 1e4 - np.linalg.norm(z)
-rom_blowup_event.terminal = True
 
 
 def create_objective_and_gradient(*args, **kwargs):
@@ -52,7 +47,7 @@ def create_objective_and_gradient(*args, **kwargs):
             z0 = Psi.T@opt_obj.X[k,:,0]
             u = Psi.T@opt_obj.F[:,k]
             sol = solve_ivp(opt_obj.evaluate_rom_rhs,[0,opt_obj.time[-1]],z0,\
-                            method='LSODA',t_eval=opt_obj.time,args=(u,) + tensors, events=rom_blowup_event)
+                            method='BDF',t_eval=opt_obj.time,args=(u,) + tensors)
             y = sol.y
             if y.shape[1] < len(opt_obj.time):
                 padding = np.repeat(y[:, -1:], len(opt_obj.time) - y.shape[1], axis=1)
@@ -64,12 +59,11 @@ def create_objective_and_gradient(*args, **kwargs):
             idx = opt_obj.poly_comp.index(1)    # index of the linear tensor
             time_pen = np.linspace(0,opt_obj.pen_tf,opt_obj.n_snapshots*opt_obj.nsave_rom)
             Z = (solve_ivp(lambda t,z: tensors[idx]@z if np.linalg.norm(z) < 1e4 else 0*z,\
-                           [0,time_pen[-1]],opt_obj.randic,method='RK45',t_eval=time_pen)).y
+                           [0,time_pen[-1]],opt_obj.randic,method='BDF',t_eval=time_pen)).y
             
             J += opt_obj.l2_pen*np.dot(Z[:,-1],Z[:,-1])
             
         J = np.sum(np.asarray(mpi_pool.comm.allgather(J)))
-        J = mpi_pool.comm.bcast(J, root=0)
         
         return J
 
@@ -114,7 +108,7 @@ def create_objective_and_gradient(*args, **kwargs):
             z0 = Psi.T@opt_obj.X[k,:,0]
             u = Psi.T@opt_obj.F[:,k]
             sol = solve_ivp(opt_obj.evaluate_rom_rhs,[0,opt_obj.time[-1]],z0,\
-                            method='LSODA',t_eval=opt_obj.time,args=(u,) + tensors, events=rom_blowup_event)
+                            method='BDF',t_eval=opt_obj.time,args=(u,) + tensors)
             Z = sol.y
             if Z.shape[1] < len(opt_obj.time):
                 padding = np.repeat(Z[:, -1:], len(opt_obj.time) - Z.shape[1], axis=1)
@@ -154,8 +148,8 @@ def create_objective_and_gradient(*args, **kwargs):
                 if np.abs(time_rom_j[-1] - tf_j) >= 1e-10:
                     raise ValueError("Error in euclidean_gradient() - final time is not correct!")
                 
-                sol_j = solve_ivp(opt_obj.evaluate_rom_rhs,[t0_j,tf_j],z0_j,method='LSODA',\
-                                  t_eval=time_rom_j,args=(u,) + tensors, events=rom_blowup_event)
+                sol_j = solve_ivp(opt_obj.evaluate_rom_rhs,[t0_j,tf_j],z0_j,method='BDF',\
+                                  t_eval=time_rom_j,args=(u,) + tensors)
                 Z_j = sol_j.y
                 if Z_j.shape[1] < len(time_rom_j):
                     padding = np.repeat(Z_j[:, -1:], len(time_rom_j) - Z_j.shape[1], axis=1)
@@ -167,7 +161,7 @@ def create_objective_and_gradient(*args, **kwargs):
                 # ------ Compute the adj ROM solution between times t0_j and tf_j ----------
                 lam_j_0 += (2/alpha)*PhiF.T@Ctej
                 sol_lam = solve_ivp(opt_obj.evaluate_rom_adjoint,[t0_j,tf_j],lam_j_0,\
-                                    method='LSODA',t_eval=time_rom_j,args=(fZ,) + tensors, events=rom_blowup_event)
+                                    method='BDF',t_eval=time_rom_j,args=(fZ,) + tensors)
                 Lam = sol_lam.y
                 if Lam.shape[1] < len(time_rom_j):
                     padding = np.repeat(Lam[:, -1:], len(time_rom_j) - Lam.shape[1], axis=1)
@@ -217,13 +211,13 @@ def create_objective_and_gradient(*args, **kwargs):
             
             time_pen = np.linspace(0,opt_obj.pen_tf,opt_obj.n_snapshots*opt_obj.nsave_rom)
             sol_Z = solve_ivp(lambda t,z: A@z,\
-                           [0,time_pen[-1]],opt_obj.randic,method='LSODA',t_eval=time_pen, events=rom_blowup_event)
+                           [0,time_pen[-1]],opt_obj.randic,method='BDF',t_eval=time_pen)
             Z = sol_Z.y
             if Z.shape[1] < len(time_pen):
                 padding = np.repeat(Z[:, -1:], len(time_pen) - Z.shape[1], axis=1)
                 Z = np.hstack((Z, padding))
             sol_Mu = solve_ivp(lambda t,z: A.T@z,\
-                           [0,time_pen[-1]],-2*opt_obj.l2_pen*Z[:,-1],method='LSODA',t_eval=time_pen, events=rom_blowup_event)
+                           [0,time_pen[-1]],-2*opt_obj.l2_pen*Z[:,-1],method='BDF',t_eval=time_pen)
             Mu = sol_Mu.y
             if Mu.shape[1] < len(time_pen):
                 padding = np.repeat(Mu[:, -1:], len(time_pen) - Mu.shape[1], axis=1)

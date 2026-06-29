@@ -38,7 +38,7 @@ use_ic = 0
 run_pod = 0
 run_opinf = 0
 run_opinf_gs = 0
-run_nitrom = 0
+run_nitrom = 1
 run_nitrom_gs = 1
 
 Lx = 1
@@ -314,15 +314,18 @@ if run_nitrom:
             np.save('results/psi_nit.npy', psi_nit)
             np.save('results/A_nit.npy', A_nit)
             np.save('results/H_nit.npy', H_nit)
+        pool.comm.Barrier()
     
     t2 = tlib.perf_counter()
     nit_time = t2 - t1
+    pool.comm.Barrier()
     
     if rank == 0:
         np.save('results/nit_time.npy', nit_time)
         np.save('results/all_iters_nit.npy', all_iters_nit)
         np.save('results/all_costs_nit.npy', all_costs_nit)
     
+pool.comm.Barrier()
 
 
 ## Compute globally stable NiTROM model
@@ -366,7 +369,7 @@ if run_nitrom_gs:
             cost, grad, hess = nitrom_functions.create_objective_and_gradient(M_gasnitrom,opt_obj,pool,fom,**nitrom_kwargs)
             problem = pymanopt.Problem(M_gasnitrom,cost,euclidean_gradient=grad)
             
-            line_searcher = myAdaptiveLineSearcher(contraction_factor=0.5,sufficient_decrease=0.1,max_iterations=10,initial_step_size=1)
+            line_searcher = myAdaptiveLineSearcher(contraction_factor=0.5,sufficient_decrease=0.1,max_iterations=25,initial_step_size=1)
             optimizer = optimizers.ConjugateGradient(max_iterations=max_iter,min_step_size=1e-20,max_time=3600,line_searcher=line_searcher,log_verbosity=1,verbosity=verb)
 
             result = optimizer.run(problem,initial_point=init_point_gs)
@@ -392,12 +395,12 @@ if run_nitrom_gs:
                 np.save('results/Rhat_nit_gs.npy', Rhat)
                 np.save('results/Hhat_nit_gs.npy', Hhat)
 
-            pool.comm.barrier()
-
+            pool.comm.Barrier()
 
 
     t2 = tlib.perf_counter()
     gasnit_time = t2-t1
+    pool.comm.Barrier()
     if rank == 0:
         np.save('results/gasnit_time.npy', gasnit_time)
         np.save('results/all_iters_gasnit.npy', all_iters_gasnit)

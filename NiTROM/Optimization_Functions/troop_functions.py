@@ -30,7 +30,6 @@ def create_objective_and_gradient(manifold,opt_obj,mpi_pool,fom):
             J += (1./opt_obj.weights[k])*np.trace(e.T@e)
         
         J = np.sum(np.asarray(mpi_pool.comm.allgather(J)))
-        J = mpi_pool.comm.bcast(J, root=0)
         return J
 
     @pymanopt.function.numpy(manifold)
