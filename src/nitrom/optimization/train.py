@@ -1,6 +1,8 @@
+from collections.abc import Callable
+from typing import Any
+
 import torch
 import torch.distributed as dist
-from typing import Callable, Any
 
 from .modules.base import InferenceModule
 
@@ -47,7 +49,6 @@ def train(
     print_every: int = 100,
     tol: float = 1e-10,
     n_restarts: int = 0,
-    manifold_types: dict[str, str] | None = None,
     scheduler_creator: Callable[[torch.optim.Optimizer], Any] | None = None,
 ) -> InferenceModule:
     r"""
@@ -87,10 +88,6 @@ def train(
         a restart no longer reduces the loss or the restart budget is spent.
         ``0`` (default) reproduces the plain stop-on-stall behavior.
     :type n_restarts: int
-    :param manifold_types: dict mapping parameter names to their manifold type,
-        e.g., ``{"Phi": "grassmann", "Psi": "stiefel"}``. If ``None`` or empty,
-        parameters are determined by the type of inference module.
-    :type manifold_types: dict[str, str] or None
     :param scheduler_creator: a callable that takes a ``torch.optim.Optimizer``
         and returns a learning rate scheduler instance. If ``None``, no learning
         rate scheduling is applied.
@@ -101,36 +98,16 @@ def train(
     is_distributed = dist.is_initialized()
     rank = dist.get_rank() if is_distributed else 0
 
-    # Validate and normalize manifold types
-    valid_manifolds = {"grassmann", "stiefel", "euclidean"}
-    model_param_names = {name for name, _ in model.named_parameters()}
-
-    # Automatically configure Phi to Grassmann and Psi to Stiefel for NitromModule
-    default_manifold_types = {}
-    if type(model).__name__ == "NitromModule":
-        if "Phi" in model_param_names:
-            default_manifold_types["Phi"] = "grassmann"
-        if "Psi" in model_param_names:
-            default_manifold_types["Psi"] = "stiefel"
-
-    # Merge user settings, prioritizing user inputs
-    user_manifold_types = manifold_types if manifold_types is not None else {}
-    combined_manifold_types = {**default_manifold_types, **user_manifold_types}
-
-    normalized_manifold_types = {}
-    for name, mtype in combined_manifold_types.items():
-        if name not in model_param_names:
-            raise ValueError(
-                f"Parameter '{name}' specified in manifold_types does not exist in the model."
-            )
-        mtype_lower = mtype.lower()
-        if mtype_lower not in valid_manifolds:
-            raise ValueError(
-                f"Manifold type for parameter '{name}' must be one of {valid_manifolds}, "
-                f"got '{mtype}'"
-            )
-        if mtype_lower != "euclidean":
-            normalized_manifold_types[name] = mtype_lower
+    # Per-parameter manifold types are configured on the module itself (via
+    # InferenceModule.set_manifold_types).  Build a name -> manifold map for the
+    # non-Euclidean parameters, which the steps below retract and tangent-project.
+    normalized_manifold_types = {
+        name: mtype
+        for (name, _), mtype in zip(
+            model.named_parameters(), model.get_manifold_types(), strict=True
+        )
+        if mtype != "euclidean"
+    }
 
     # Synchronize parameters across ranks so every process starts the
     # data-parallel run from identical weights.  The all-reduced gradient is
@@ -220,7 +197,7 @@ def train(
         _transport_optimizer_states(optimizer, model, normalized_manifold_types)
 
         loss_val = loss.item()
-        
+
         # Step scheduler if present
         if scheduler is not None:
             if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):

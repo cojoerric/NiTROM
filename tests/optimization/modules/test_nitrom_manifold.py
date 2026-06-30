@@ -218,6 +218,9 @@ def test_nitrom_manifold_optimization_run(optimizer_type):
         module.Phi.copy_(_retract(module.Phi))
         module.Psi.copy_(_retract(module.Psi))
 
+    # Phi on the Grassmann manifold, Psi on the Stiefel manifold.
+    module.set_manifold_types(["Phi", "Psi"], ["grassmann", "stiefel"])
+
     # Train for 3 epochs with stable optimizer-specific learning rates
     lr = {"sgd": 1e-8, "adam": 1e-4, "lbfgs": 0.1}[optimizer_type]
     train(

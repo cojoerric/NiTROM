@@ -3,6 +3,10 @@ import abc
 import torch
 import torch.nn as nn
 
+#: Manifolds a parameter may be optimized on (see
+#: :meth:`InferenceModule.set_manifold_types`).
+MANIFOLD_TYPES = frozenset({"euclidean", "grassmann", "stiefel"})
+
 
 class InferenceModule(nn.Module, abc.ABC):
     r"""
@@ -25,6 +29,12 @@ class InferenceModule(nn.Module, abc.ABC):
     them with :meth:`set_learnable`); a subclass enforces this by passing its
     computed gradients through :meth:`_apply_learnability`, which zeroes the
     gradient of any frozen parameter so the optimizer leaves it fixed.
+
+    **Manifolds.** A parameter may be optimized on a matrix manifold
+    (``"grassmann"`` or ``"stiefel"``) rather than Euclidean space; configure
+    this per parameter with :meth:`set_manifold_types`.  The training loop reads
+    :meth:`get_manifold_types` to retract iterates and tangent-project the
+    gradients.
     """
 
     @property
@@ -95,6 +105,54 @@ class InferenceModule(nn.Module, abc.ABC):
             if not learnable:
                 grads[i] = torch.zeros_like(grads[i])
         return grads
+
+    @property
+    def manifold_types(self) -> list[str]:
+        """
+        Per-parameter manifold type, in :meth:`parameters` order.  Lazily
+        initialized to ``"euclidean"`` for every registered parameter; set it
+        with :meth:`set_manifold_types`.
+        """
+        if getattr(self, "_manifold_types", None) is None:
+            self._manifold_types = ["euclidean"] * sum(1 for _ in self.parameters())
+        return self._manifold_types
+
+    def set_manifold_types(self, names: list[str], types: list[str]) -> None:
+        """
+        Assign the manifold each named parameter is optimized on.
+
+        :param names: parameter names
+        :type names: list[str]
+        :param types: matching manifold types, each one of ``"euclidean"``,
+            ``"grassmann"``, or ``"stiefel"``
+        :type types: list[str]
+        :raises ValueError: if ``names`` and ``types`` differ in length, or a
+            type is not a recognized manifold
+        :raises KeyError: if a name is not a registered parameter
+        """
+        if len(names) != len(types):
+            raise ValueError(
+                f"names and types must have equal length, got "
+                f"{len(names)} and {len(types)}."
+            )
+        index = {name: i for i, (name, _) in enumerate(self.named_parameters())}
+        mtypes = self.manifold_types
+        for name, mtype in zip(names, types, strict=True):
+            if name not in index:
+                raise KeyError(
+                    f"Unknown parameter '{name}'; expected one of {list(index)}."
+                )
+            m = mtype.lower()
+            if m not in MANIFOLD_TYPES:
+                raise ValueError(
+                    f"manifold type for '{name}' must be one of "
+                    f"{sorted(MANIFOLD_TYPES)}, got '{mtype}'."
+                )
+            mtypes[index[name]] = m
+
+    def get_manifold_types(self) -> list[str]:
+        """Return the per-parameter manifold types, in :meth:`parameters` order."""
+        return self.manifold_types
 
     @abc.abstractmethod
     def forward(self) -> torch.Tensor:

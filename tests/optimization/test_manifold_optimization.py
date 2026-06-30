@@ -16,151 +16,97 @@ class DummyManifoldModule(InferenceModule):
         self.theta = nn.Parameter(torch.randn(r, r, dtype=torch.float64))
 
     def forward(self) -> torch.Tensor:
-        # Minimum at Phi=Psi=theta=0, but Phi, Psi are constrained to be orthonormal.
-        # Under orthonormal constraints, the minimum is when parameters are orthonormal.
+        # Minimum at Phi=Psi=theta=0; Phi, Psi are constrained to be orthonormal.
         return (self.Phi**2).sum() + (self.Psi**2).sum() + (self.theta**2).sum()
 
     def gradient(self) -> list[torch.Tensor]:
-        # Analytical gradients of the forward cost
         return [2.0 * self.Phi, 2.0 * self.Psi, 2.0 * self.theta]
 
 
-def test_manifold_types_validation():
-    """Verify that train() raises ValueError for invalid parameter names or manifold types."""
+def test_set_manifold_types_validation():
+    """set_manifold_types rejects unknown parameters and invalid manifolds."""
     module = DummyManifoldModule()
 
-    # Invalid parameter name
-    with pytest.raises(ValueError, match="Parameter 'non_existent' specified in manifold_types does not exist"):
-        train(module, n_epochs=1, manifold_types={"non_existent": "grassmann"})
+    # Default: every parameter is Euclidean.
+    assert module.get_manifold_types() == ["euclidean", "euclidean", "euclidean"]
 
-    # Invalid manifold type
-    with pytest.raises(ValueError, match="Manifold type for parameter 'Phi' must be one of"):
-        train(module, n_epochs=1, manifold_types={"Phi": "invalid_manifold"})
+    with pytest.raises(KeyError, match="Unknown parameter 'non_existent'"):
+        module.set_manifold_types(["non_existent"], ["grassmann"])
+
+    with pytest.raises(ValueError, match="manifold type for 'Phi'"):
+        module.set_manifold_types(["Phi"], ["invalid_manifold"])
+
+    with pytest.raises(ValueError, match="equal length"):
+        module.set_manifold_types(["Phi", "Psi"], ["grassmann"])
+
+
+def test_get_manifold_types_reflects_setting():
+    """get_manifold_types returns the per-parameter list in parameters() order."""
+    module = DummyManifoldModule()
+    module.set_manifold_types(["Phi", "Psi"], ["grassmann", "stiefel"])
+    # parameters() order is Phi, Psi, theta.
+    assert module.get_manifold_types() == ["grassmann", "stiefel", "euclidean"]
 
 
 @pytest.mark.parametrize("optimizer_type", ["adam", "sgd", "lbfgs"])
 def test_manifold_optimization_properties(optimizer_type):
-    """Verify that parameters stay orthonormal and gradients are projected correctly."""
+    """Parameters stay orthonormal and gradients are projected to tangent spaces."""
     module = DummyManifoldModule(N=5, r=2)
     I_r = torch.eye(2, dtype=torch.float64)
 
-    # Initial matrices are random and not orthonormal
+    # Initial matrices are random and not orthonormal.
     assert not torch.allclose(module.Phi.T @ module.Phi, I_r, atol=1e-3)
     assert not torch.allclose(module.Psi.T @ module.Psi, I_r, atol=1e-3)
 
-    # Train for 5 epochs
-    manifold_types = {"Phi": "grassmann", "Psi": "stiefel"}
-    train(
-        module,
-        n_epochs=5,
-        lr=0.01,
-        optimizer_type=optimizer_type,
-        print_every=1,
-        manifold_types=manifold_types,
-    )
+    module.set_manifold_types(["Phi", "Psi"], ["grassmann", "stiefel"])
+    train(module, n_epochs=5, lr=0.01, optimizer_type=optimizer_type, print_every=1)
 
-    # 1. Check orthonormality constraints after training
+    # 1. Orthonormality after training.
     assert torch.allclose(module.Phi.T @ module.Phi, I_r, atol=1e-12)
     assert torch.allclose(module.Psi.T @ module.Psi, I_r, atol=1e-12)
 
-    # 2. Check that the assigned gradients are in the respective tangent spaces
+    # 2. Assigned gradients lie in the respective tangent spaces.
     assert module.Phi.grad is not None
     assert module.Psi.grad is not None
 
     # Grassmann constraint: Phi.T @ grad_Phi = 0
-    assert torch.allclose(module.Phi.T @ module.Phi.grad, torch.zeros(2, 2, dtype=torch.float64), atol=1e-7)
-
-    # Stiefel constraint: Psi.T @ grad_Psi + grad_Psi.T @ Psi = 0 (skew-symmetric)
+    assert torch.allclose(
+        module.Phi.T @ module.Phi.grad,
+        torch.zeros(2, 2, dtype=torch.float64),
+        atol=1e-7,
+    )
+    # Stiefel constraint: Psi.T @ grad_Psi is skew-symmetric.
     skew = module.Psi.T @ module.Psi.grad
-    assert torch.allclose(skew + skew.T, torch.zeros(2, 2, dtype=torch.float64), atol=1e-7)
+    assert torch.allclose(
+        skew + skew.T, torch.zeros(2, 2, dtype=torch.float64), atol=1e-7
+    )
 
 
-def test_euclidean_behaves_normally():
-    """Verify that specifying 'euclidean' explicitly behaves like the default."""
+def test_euclidean_is_default():
+    """Without set_manifold_types, parameters are not constrained."""
     module = DummyManifoldModule(N=5, r=2)
     I_r = torch.eye(2, dtype=torch.float64)
 
-    # Mark all as Euclidean
-    train(
-        module,
-        n_epochs=2,
-        lr=0.01,
-        optimizer_type="sgd",
-        manifold_types={"Phi": "euclidean", "Psi": "euclidean"},
-    )
+    train(module, n_epochs=2, lr=0.01, optimizer_type="sgd")
 
-    # Since they are Euclidean, they should not be orthonormalized
+    # Euclidean parameters are not orthonormalized.
     assert not torch.allclose(module.Phi.T @ module.Phi, I_r, atol=1e-3)
     assert not torch.allclose(module.Psi.T @ module.Psi, I_r, atol=1e-3)
 
 
-class NitromModule(InferenceModule):
-    """A mock NitromModule to test automatic parameter detection."""
-
-    def __init__(self, N=5, r=2):
-        super().__init__()
-        self.Phi = nn.Parameter(torch.randn(N, r, dtype=torch.float64))
-        self.Psi = nn.Parameter(torch.randn(N, r, dtype=torch.float64))
-        self.theta = nn.Parameter(torch.randn(r, r, dtype=torch.float64))
-
-    def forward(self) -> torch.Tensor:
-        return (self.Phi**2).sum() + (self.Psi**2).sum() + (self.theta**2).sum()
-
-    def gradient(self) -> list[torch.Tensor]:
-        return [2.0 * self.Phi, 2.0 * self.Psi, 2.0 * self.theta]
-
-
-def test_nitrom_automatic_manifolds():
-    """Verify that if type(model).__name__ == 'NitromModule', it automatically sets default manifolds."""
-    module = NitromModule(N=5, r=2)
+def test_partial_manifold_assignment():
+    """Only the parameters assigned a manifold are constrained; the rest stay free."""
+    module = DummyManifoldModule(N=5, r=2)
     I_r = torch.eye(2, dtype=torch.float64)
 
-    # Initially not orthonormal
+    # Only Psi -> Stiefel; Phi is left Euclidean (the default).
+    module.set_manifold_types(["Psi"], ["stiefel"])
+    train(module, n_epochs=3, lr=0.01, optimizer_type="sgd")
+
     assert not torch.allclose(module.Phi.T @ module.Phi, I_r, atol=1e-3)
-    assert not torch.allclose(module.Psi.T @ module.Psi, I_r, atol=1e-3)
-
-    # Train without specifying manifold_types (should default to Phi: grassmann, Psi: stiefel)
-    train(
-        module,
-        n_epochs=3,
-        lr=0.01,
-        optimizer_type="sgd",
-    )
-
-    # Verify they were retracted to be orthonormal
-    assert torch.allclose(module.Phi.T @ module.Phi, I_r, atol=1e-12)
     assert torch.allclose(module.Psi.T @ module.Psi, I_r, atol=1e-12)
 
-    # Verify that gradients are in their respective tangent spaces
-    assert module.Phi.grad is not None
-    assert module.Psi.grad is not None
-    assert torch.allclose(module.Phi.T @ module.Phi.grad, torch.zeros(2, 2, dtype=torch.float64), atol=1e-7)
-
     skew = module.Psi.T @ module.Psi.grad
-    assert torch.allclose(skew + skew.T, torch.zeros(2, 2, dtype=torch.float64), atol=1e-7)
-
-
-def test_nitrom_user_priority():
-    """Verify that user-provided manifold_types override the NitromModule defaults."""
-    module = NitromModule(N=5, r=2)
-    I_r = torch.eye(2, dtype=torch.float64)
-
-    # Override Phi to be Euclidean, while leaving Psi as default (Stiefel)
-    train(
-        module,
-        n_epochs=3,
-        lr=0.01,
-        optimizer_type="sgd",
-        manifold_types={"Phi": "euclidean"},
+    assert torch.allclose(
+        skew + skew.T, torch.zeros(2, 2, dtype=torch.float64), atol=1e-7
     )
-
-    # Phi should remain Euclidean (not orthonormal)
-    assert not torch.allclose(module.Phi.T @ module.Phi, I_r, atol=1e-3)
-    # Psi should have been retracted to Stiefel (orthonormal)
-    assert torch.allclose(module.Psi.T @ module.Psi, I_r, atol=1e-12)
-
-    # Psi's gradient should be in Stiefel tangent space
-    assert module.Psi.grad is not None
-    skew = module.Psi.T @ module.Psi.grad
-    assert torch.allclose(skew + skew.T, torch.zeros(2, 2, dtype=torch.float64), atol=1e-7)
-
