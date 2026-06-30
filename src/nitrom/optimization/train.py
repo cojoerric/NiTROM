@@ -1,5 +1,6 @@
 import torch
 import torch.distributed as dist
+from typing import Callable, Any
 
 from .modules.base import InferenceModule
 
@@ -47,6 +48,7 @@ def train(
     tol: float = 1e-10,
     n_restarts: int = 0,
     manifold_types: dict[str, str] | None = None,
+    scheduler_creator: Callable[[torch.optim.Optimizer], Any] | None = None,
 ) -> InferenceModule:
     r"""
     Train an :class:`InferenceModule` by minimizing its cost using the
@@ -89,6 +91,10 @@ def train(
         e.g., ``{"Phi": "grassmann", "Psi": "stiefel"}``. If ``None`` or empty,
         parameters are determined by the type of inference module.
     :type manifold_types: dict[str, str] or None
+    :param scheduler_creator: a callable that takes a ``torch.optim.Optimizer``
+        and returns a learning rate scheduler instance. If ``None``, no learning
+        rate scheduling is applied.
+    :type scheduler_creator: Callable[[torch.optim.Optimizer], Any] or None
     :returns: the trained model
     :rtype: InferenceModule
     """
@@ -153,6 +159,7 @@ def train(
         )
 
     optimizer = _make_optimizer()
+    scheduler = scheduler_creator(optimizer) if scheduler_creator is not None else None
 
     def _compute_and_assign_grads() -> torch.Tensor:
         """Evaluate cost, compute analytic gradients, and assign them."""
@@ -213,6 +220,14 @@ def train(
         _transport_optimizer_states(optimizer, model, normalized_manifold_types)
 
         loss_val = loss.item()
+        
+        # Step scheduler if present
+        if scheduler is not None:
+            if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                scheduler.step(loss_val)
+            else:
+                scheduler.step()
+
         # Monitor: gradient norm at the current iterate (assigned param.grads).
         grad_norm = torch.sqrt(
             sum(
@@ -222,9 +237,10 @@ def train(
             )
         ).item()
         if rank == 0 and (epoch % print_every == 0 or epoch == n_epochs - 1):
+            lr_str = f" | LR: {optimizer.param_groups[0]['lr']:.2e}" if scheduler is not None else ""
             print(
                 f"Epoch {epoch:6d} | Loss: {loss_val:.6e} "
-                f"| GradNorm: {grad_norm:.6e}"
+                f"| GradNorm: {grad_norm:.6e}{lr_str}"
             )
 
         # Convergence check
@@ -243,6 +259,8 @@ def train(
                     restarts_left -= 1
                     loss_at_last_restart = loss_val
                     optimizer = _make_optimizer()
+                    if scheduler_creator is not None:
+                        scheduler = scheduler_creator(optimizer)
                     loss_prev = None
                     if rank == 0:
                         print(

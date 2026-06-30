@@ -91,7 +91,8 @@ class TestAssembleGasTensors:
         Qinv = torch.linalg.inv(model.Q)
         Qtil = Qinv @ Qinv.T
         if 1 in poly_comp:
-            A_expected = ((model.K - model.K.T) - model.R @ model.R.T) @ Qtil
+            Rinv = torch.linalg.inv(model.R)
+            A_expected = ((model.K - model.K.T) - Rinv @ Rinv.T) @ Qtil
             np.testing.assert_allclose(
                 tensors[poly_comp.index(1)].numpy(), A_expected.numpy(), rtol=1e-12,
             )
@@ -291,7 +292,8 @@ def _autograd_grads(K, R, Q, S, z, v, poly_comp, B=None, f_fun=None):
 
     dzdt = torch.zeros_like(z)
     if 1 in poly_comp:
-        A = ((params["K"] - params["K"].T) - params["R"] @ params["R"].T) @ Qtil
+        Rinv = torch.linalg.inv(params["R"])
+        A = ((params["K"] - params["K"].T) - Rinv @ Rinv.T) @ Qtil
         if z.ndim == 1:
             dzdt = dzdt + A @ z
         else:
@@ -440,3 +442,71 @@ class TestForcing:
 
         dd_fd = (J_plus - J_minus) / (2 * eps)
         np.testing.assert_allclose(dd_vjp, dd_fd, rtol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# Energy conservation tests
+# ---------------------------------------------------------------------------
+
+class TestEnergyConservation:
+
+    def test_evaluate_rhs_tensors_energy_conservation(self, gas_model_and_data):
+        """
+        Test that the condition z^T Q^{-1} Q^{-T} H:zz^T + (H:zz^T)^T Q^{-1}Q^{-T} z = 0
+        holds for the inner tensors actually used during evaluate_rhs.
+        """
+        model, poly_comp, _, _, _, _ = gas_model_and_data
+        if 2 not in poly_comp:
+            pytest.skip("No quadratic term")
+        
+        # Get tensors from the inner model which is used in evaluate_rhs
+        inner_tensors = model.model.get_params()
+        H_inner = inner_tensors[poly_comp.index(2)]
+        
+        Qinv = torch.linalg.inv(model.Q)
+        Qtil = Qinv @ Qinv.T
+        
+        rng = np.random.default_rng(999)
+        for _ in range(5):
+            z = torch.tensor(rng.standard_normal(R), dtype=torch.float64)
+            H_zz = torch.einsum("ijk,j,k->i", H_inner, z, z)
+            
+            term1 = z @ Qtil @ H_zz
+            term2 = H_zz @ Qtil @ z
+            val = term1 + term2
+            np.testing.assert_allclose(val.item(), 0.0, atol=1e-7)
+
+    def test_retracted_H_energy_conservation(self, gas_model_and_data):
+        """
+        Test that the reconstructed H based on the retraction done in 
+        retract_general_tensors_to_gas_tensors satisfies the energy conservation condition:
+        z^T Q^{-1} Q^{-T} H:zz^T + (H:zz^T)^T Q^{-1}Q^{-T} z = 0.
+        """
+        model, poly_comp, _, _, _, _ = gas_model_and_data
+        if 2 not in poly_comp:
+            pytest.skip("No quadratic term")
+            
+        rng = np.random.default_rng(1234)
+        A_gen = torch.tensor(rng.standard_normal((R, R)), dtype=torch.float64)
+        H_gen = torch.tensor(rng.standard_normal((R, R, R)), dtype=torch.float64)
+        
+        tensors = [A_gen]
+        if 2 in poly_comp:
+            tensors.append(H_gen)
+            
+        model.retract_general_tensors_to_gas_tensors(tensors)
+        
+        inner_tensors = model.model.get_params()
+        H_recon = inner_tensors[poly_comp.index(2)]
+        
+        Qinv = torch.linalg.inv(model.Q)
+        Qtil = Qinv @ Qinv.T
+        
+        for _ in range(5):
+            z = torch.tensor(rng.standard_normal(R), dtype=torch.float64)
+            H_zz = torch.einsum("ijk,j,k->i", H_recon, z, z)
+            
+            term1 = z @ Qtil @ H_zz
+            term2 = H_zz @ Qtil @ z
+            val = term1 + term2
+            np.testing.assert_allclose(val.item(), 0.0, atol=1e-7)

@@ -38,8 +38,13 @@ def _solve_at_tf(model, x0, dt, method):
     dt_actual = (TF - T0) / nt
     x = x0.clone()
     t = T0
+    # Use tighter tolerance for implicit convergence order checks
+    kwargs = {}
+    if method == "backward_euler":
+        kwargs["newton_tol"] = 1e-14
+        kwargs["newton_max_iter"] = 30
     for _ in range(nt):
-        x = evolve(model.evaluate_rhs, t, x, dt_actual, method)
+        x = evolve(model.evaluate_rhs, t, x, dt_actual, method, **kwargs)
         t += dt_actual
     return x
 
@@ -143,12 +148,31 @@ class TestRK2Convergence:
 
 
 # ---------------------------------------------------------------------------
+# Backward Euler convergence tests
+# ---------------------------------------------------------------------------
+
+class TestBackwardEulerConvergence:
+
+    def test_unbatched(self, model, x0_unbatched):
+        _, errors = _compute_successive_errors(
+            model, x0_unbatched, "backward_euler"
+        )
+        _check_order(errors, expected_order=1)
+
+    def test_batched(self, model, x0_batched):
+        _, errors = _compute_successive_errors(
+            model, x0_batched, "backward_euler"
+        )
+        _check_order(errors, expected_order=1)
+
+
+# ---------------------------------------------------------------------------
 # Batched vs unbatched consistency
 # ---------------------------------------------------------------------------
 
 class TestBatchedConsistency:
 
-    @pytest.mark.parametrize("method", ["rk4", "rk2"])
+    @pytest.mark.parametrize("method", ["rk4", "rk2", "backward_euler"])
     def test_batched_matches_unbatched(self, model, method):
         """Each row of the batched solution should match the
         corresponding unbatched solve."""
@@ -162,9 +186,47 @@ class TestBatchedConsistency:
 
         sol_batched = _solve_at_tf(model, x0_batch, dt, method)  # (B, n)
 
+        rtol = 1e-8 if method == "backward_euler" else 1e-12
+        atol = 1e-13 if method == "backward_euler" else 0.0
         for b in range(B):
             sol_single = _solve_at_tf(model, x0_batch[b], dt, method)  # (n,)
             np.testing.assert_allclose(
-                sol_batched[b].numpy(), sol_single.numpy(), rtol=1e-12,
+                sol_batched[b].detach().numpy(), sol_single.detach().numpy(),
+                rtol=rtol, atol=atol,
                 err_msg=f"Batch index {b} mismatch for method={method}",
             )
+
+
+# ---------------------------------------------------------------------------
+# Autograd verification through implicit solver
+# ---------------------------------------------------------------------------
+
+class TestImplicitAutograd:
+
+    @pytest.mark.parametrize("method", ["backward_euler"])
+    def test_gradients_propagate(self, model, x0_unbatched, method):
+        """Verify that gradients propagate back to model parameters through solve_ivp."""
+        params = model.get_params()
+        for p in params:
+            p.requires_grad_(True)
+
+        t_eval = torch.tensor([0.1, 0.2], dtype=torch.float64)
+        sol = solve_ivp(
+            model.evaluate_rhs,
+            x0_unbatched,
+            t0=0.0,
+            tf=0.2,
+            dt=0.02,
+            t_eval=t_eval,
+            method=method,
+        )
+
+        loss = sol.sum()
+        loss.backward()
+
+        for i, p in enumerate(params):
+            if model.poly_comp[i] == 0:
+                continue
+            assert p.grad is not None
+            assert not torch.allclose(p.grad, torch.zeros_like(p.grad))
+

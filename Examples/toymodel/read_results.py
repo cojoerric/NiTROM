@@ -25,9 +25,9 @@ B = torch.ones((n, 1), device=device, dtype=dtype)
 C = torch.ones((1, n), device=device, dtype=dtype)  # output operator y = C x
 
 
-def fom_rhs(t, x, f):
+def fom_rhs(t, x, forcing):
     """Step-forced FOM dynamics, batched over the leading axis (f = B u)."""
-    return x @ A2.T + torch.einsum("ijk,...j,...k->...i", A3, x, x) + f
+    return x @ A2.T + torch.einsum("ijk,...j,...k->...i", A3, x, x) + forcing
 
 
 # %% Load the trained ROMs (each is a PolynomialModel plus its POD basis Phi)
@@ -84,7 +84,7 @@ forcing_fns = [
     for b in amplitudes
 ]
 
-X_fom = solve_ivp(fom_rhs, x0, t0, tf, dt_sub, time, "rk4", forcing_field)
+X_fom = solve_ivp(fom_rhs, x0, t0, tf, dt_sub, time, "rk4", forcing=forcing_field)
 Y_fom = torch.einsum("on,bnt->bot", C, X_fom)  # FOM output (n_test, n_out, nt)
 
 # Per-trajectory weight alpha_j = ||C x_ss(b_j)||^2, the steady-state output

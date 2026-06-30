@@ -196,15 +196,24 @@ class GasPolynomialModel(Model):
             K = \tfrac12 N, \quad
             R = \mathrm{chol}(M)^{-1}, \quad
             Q = \mathrm{chol}(P^{-1})^\top, \quad
-            S_{:,:,k} = \tfrac12 (H_{:,:,k} - H_{:,:,k}^\top),
+            S_{:,:,k} = \tfrac14 \bigl(H_{:,:,k} P^{-1} - (H_{:,:,k} P^{-1})^\top\bigr),
 
         which give :math:`K - K^\top = N`, :math:`R^{-1}R^{-\top} = M` and
-        :math:`Q^{-1}Q^{-\top} = P`.  The reconstruction is then exact,
+        :math:`Q^{-1}Q^{-\top} = P`.  The reconstruction of ``A`` is then exact,
 
         .. math::
 
             \bigl((K - K^\top) - R^{-1}R^{-\top}\bigr)\,Q^{-1}Q^{-\top}
                 = (N - M)\,P = A P^{-1} P = A.
+
+        If the quadratic operator ``H`` is structured (skew-symmetric under the
+        :math:`P` metric, i.e., :math:`H_{:,:,k} P^{-1}` is skew-symmetric), then
+        its reconstruction is also exact:
+
+        .. math::
+
+            S_{:,:,k} Q^{-1}Q^{-\top} - S_{:,:,k}^\top Q^{-1}Q^{-\top}
+                = 2 S_{:,:,k} P = H_{:,:,k}.
 
         Using the Lyapunov solution :math:`P` (rather than :math:`P = I`)
         guarantees :math:`M` is SPD for *any* Hurwitz ``A``, so spectral
@@ -218,7 +227,8 @@ class GasPolynomialModel(Model):
             the left-half plane when ``A`` is not already strictly stable
         :type margin: float
         :raises RuntimeError: if the assembled ``[K, R, Q, S]`` fail to
-            reconstruct the (stabilized) ``A``
+            reconstruct the (stabilized) ``A``, or if a structured ``H``
+            fails to be reconstructed
         """
         from scipy.linalg import solve_continuous_lyapunov
 
@@ -251,8 +261,9 @@ class GasPolynomialModel(Model):
         R = torch.linalg.inv(torch.linalg.cholesky(M))
         Q = torch.linalg.cholesky(Pinv).T
 
-        # S_{:,:,k} = skew(H_{:,:,k}): transpose the leading (i, j) axes.
-        S = 0.5 * (H - H.permute(1, 0, 2))
+        # S_{:,:,k} = skew(H_{:,:,k} P^{-1}): transpose the leading (i, j) axes.
+        H_Pinv = torch.einsum("ijk,jl->ilk", H, Pinv)
+        S = 0.25 * (H_Pinv - H_Pinv.permute(1, 0, 2))
 
         # Verify the reconstruction A = ((K - K^T) - R^{-1}R^{-T}) Q^{-1}Q^{-T}.
         Qinv = torch.linalg.inv(Q)
@@ -263,6 +274,23 @@ class GasPolynomialModel(Model):
             raise RuntimeError(
                 f"GAS retraction failed to reconstruct A (rel. error {err:.2e})."
             )
+
+        # Verify the reconstruction of H if the input was already structured.
+        if 2 in self.poly_comp:
+            Qtil = Qinv @ Qinv.T
+            H_recon = torch.einsum("ilk,lj->ijk", S, Qtil) - torch.einsum(
+                "lik,lj->ijk", S, Qtil
+            )
+            # Check if the input H was already structured (skew-symmetric under the P metric)
+            is_structured = torch.linalg.norm(H_Pinv + H_Pinv.permute(1, 0, 2)) / (
+                torch.linalg.norm(H_Pinv) + 1e-12
+            ) < 1e-6
+            if is_structured:
+                err_H = torch.linalg.norm(H_recon - H) / (torch.linalg.norm(H) + 1e-12)
+                if err_H > 1e-6:
+                    raise RuntimeError(
+                        f"GAS retraction failed to reconstruct H (rel. error {err_H:.2e})."
+                    )
 
         # Set the GAS parameters (preserving B and any other current params).
         retracted = {"K": K, "R": R, "Q": Q, "S": S}
@@ -313,8 +341,9 @@ class GasPolynomialModel(Model):
         # grad_K, grad_R (from linear term A = ((K - K^T) - R^{-1} R^{-T}) @ Qtil)
         Rinv = torch.linalg.inv(self.R) if 1 in self.poly_comp else None
         if 1 in self.poly_comp:
-            sym = grad_A @ Qtil + Qtil @ grad_A.T
-            grad_K = grad_A @ Qtil - Qtil @ grad_A.T
+            grad_A_Qtil = grad_A @ Qtil
+            sym = grad_A_Qtil + grad_A_Qtil.T
+            grad_K = grad_A_Qtil - grad_A_Qtil.T
             # M = R^{-1} R^{-T}; chain through M = P P^T and P = R^{-1}.
             grad_R = Rinv.T @ sym @ Rinv @ Rinv.T
             grads.extend([grad_K, grad_R])

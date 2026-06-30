@@ -50,9 +50,9 @@ class NitromModule(InferenceModule):
     ) -> None:
         super().__init__()
 
-        if time_stepper not in ("rk2", "rk4"):
+        if time_stepper not in ("rk2", "rk4", "backward_euler"):
             raise ValueError(
-                f"time_stepper must be 'rk2' or 'rk4', got {time_stepper!r}."
+                f"time_stepper must be 'rk2', 'rk4', or 'backward_euler', got {time_stepper!r}."
             )
 
         self.registry = registry

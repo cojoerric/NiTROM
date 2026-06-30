@@ -25,6 +25,10 @@ n_traj = 4
 r = 2  # reduced dimension
 poly_comp = [1, 2]
 
+# Initialization model flag: choose from "galerkin", "gas_opinf", or "nitrom"
+init_model = "galerkin"
+
+
 if rank == 0:
     os.makedirs(models_dir, exist_ok=True)
 
@@ -118,48 +122,67 @@ if rank == 0:
     )
 
 # %% 1) Train standard NiTROM
-# printr("\n=== NiTROM ===")
-# nitrom_model = PolynomialModel(
-#     r, poly_comp, device=device, dtype=dtype, forcing_config=forcing_config, tensors=(A2r, A3r, Br)
-# )
-# registry = ParamRegistry(nitrom_model, projection)
-# nitrom = NitromModule(training_data, registry, fom=fom, n_substeps=10)
-# nitrom.set_unlearnable("B")  # B = Phi^T B_fom is fixed, not trained
+printr("\n=== NiTROM ===")
+nitrom_model = PolynomialModel(
+    r, poly_comp, device=device, dtype=dtype, forcing_config=forcing_config, tensors=(A2r, A3r, Br)
+)
+registry = ParamRegistry(nitrom_model, projection)
+nitrom = NitromModule(training_data, registry, fom=fom, n_substeps=10)
+nitrom.set_unlearnable("B")  # B = Phi^T B_fom is fixed, not trained
 
-# printr(f"initial cost: {global_cost(nitrom):.6e}")
-# # We call train(). Since model is a NitromModule, Phi and Psi will automatically be treated
-# # as Grassmann and Stiefel manifold elements respectively.
-# train(
-#     nitrom,
-#     n_epochs=30,
-#     lr=1.0,
-#     optimizer_type="lbfgs",
-#     print_every=1,
-#     tol=1e-14,
-# )
-# printr(f"final cost:   {global_cost(nitrom):.6e}")
+printr(f"initial cost: {global_cost(nitrom):.6e}")
+# We call train(). Since model is a NitromModule, Phi and Psi will automatically be treated
+# as Grassmann and Stiefel manifold elements respectively.
+train(
+    nitrom,
+    n_epochs=30,
+    lr=1.0,
+    optimizer_type="lbfgs",
+    print_every=1,
+    tol=1e-14,
+)
+printr(f"final cost:   {global_cost(nitrom):.6e}")
 
-# if rank == 0:
-#     nitrom._sync_to_registry()
-#     save_checkpoint(
-#         nitrom_model.get_params(),
-#         "nitrom",
-#         os.path.join(models_dir, "nitrom_model.pt"),
-#         nitrom.projection.Phi,
-#         nitrom.projection.Psi,
-#     )
-# nitrom_checkpoint = torch.load(os.path.join(models_dir, "nitrom_model.pt"))
-# nitrom_model = PolynomialModel(
-#     nitrom_checkpoint["r"], nitrom_checkpoint["poly_comp"], device=device, dtype=dtype, forcing_config=forcing_config, tensors=tuple(nitrom_checkpoint["tensors"])
-# )
-# registry = ParamRegistry(nitrom_model, projection)
-# nitrom = NitromModule(training_data, registry, fom=fom, n_substeps=10)
-# nitrom.set_unlearnable("B")
+if rank == 0:
+    nitrom._sync_to_registry()
+    save_checkpoint(
+        nitrom_model.get_params(),
+        "nitrom",
+        os.path.join(models_dir, "nitrom_model.pt"),
+        nitrom.projection.Phi,
+        nitrom.projection.Psi,
+    )
+nitrom_checkpoint = torch.load(os.path.join(models_dir, "nitrom_model.pt"))
+nitrom_model = PolynomialModel(
+    nitrom_checkpoint["r"], nitrom_checkpoint["poly_comp"], device=device, dtype=dtype, forcing_config=forcing_config, tensors=tuple(nitrom_checkpoint["tensors"])
+)
+registry = ParamRegistry(nitrom_model, projection)
+nitrom = NitromModule(training_data, registry, fom=fom, n_substeps=10)
+nitrom.set_unlearnable("B")
 
-# %% 2) Train GAS-NiTROM, initialized from the Gas-OpInf operators
-printr("\n=== GAS-NiTROM ===")
-gas_opinf_checkpoint = torch.load(os.path.join(models_dir, "gas_opinf_model.pt"))
-gas_init = [t.to(device=device, dtype=dtype) for t in gas_opinf_checkpoint["gas_params"]]
+# %% 2) Train GAS-NiTROM
+printr(f"\n=== GAS-NiTROM (initialized from {init_model}) ===")
+
+if init_model == "gas_opinf":
+    ckpt_path = os.path.join(models_dir, "gas_opinf_model.pt")
+    printr(f"Loading initialization from {ckpt_path}...")
+    ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+    gas_init = [t.to(device=device, dtype=dtype) for t in ckpt["gas_params"]]
+    init_Phi = ckpt["Phi"].to(device=device, dtype=dtype)
+    init_Psi = ckpt.get("Psi", init_Phi).to(device=device, dtype=dtype)
+else:
+    ckpt_name = "galerkin_model.pt" if init_model == "galerkin" else "nitrom_model.pt"
+    ckpt_path = os.path.join(models_dir, ckpt_name)
+    printr(f"Loading initialization from {ckpt_path}...")
+    ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+    tensors = [t.to(device=device, dtype=dtype) for t in ckpt["tensors"]]
+    
+    # Retract the general operator tensors to the GAS manifold
+    seed = GasPolynomialModel(r, poly_comp, device=device, dtype=dtype)
+    seed.retract_general_tensors_to_gas_tensors(tensors[:2])
+    gas_init = [*seed.get_params(), tensors[2].clone()]
+    init_Phi = ckpt["Phi"].to(device=device, dtype=dtype)
+    init_Psi = ckpt.get("Psi", init_Phi).to(device=device, dtype=dtype)
 
 gas_nitrom_model = GasPolynomialModel(
     r,
@@ -170,18 +193,18 @@ gas_nitrom_model = GasPolynomialModel(
     forcing_config=forcing_config,
 )
 
-# Start projection from the optimized Gas-OpInf bases
-projection_gas = LinearProjection([Phi, Phi])
+# Start projection from the loaded bases
+projection_gas = LinearProjection([init_Phi, init_Psi])
 
 registry_gas = ParamRegistry(gas_nitrom_model, projection_gas)
-gas_nitrom = NitromModule(training_data, registry_gas, fom=fom, n_substeps=10)
+gas_nitrom = NitromModule(training_data, registry_gas, fom=fom, n_substeps=15)
 gas_nitrom.set_unlearnable("B")
 
 printr(f"initial cost: {global_cost(gas_nitrom):.6e}")
 train(
     gas_nitrom,
-    n_epochs=30,
-    lr=1.0,
+    n_epochs=200,
+    lr=5e-3,
     optimizer_type="lbfgs",
     print_every=1,
     tol=1e-14,
