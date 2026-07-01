@@ -3,6 +3,8 @@ from typing import Any
 from .model import Model
 from .polynomial_model import PolynomialModel
 
+import numpy as np
+
 
 class GasPolynomialModel(Model):
     r"""
@@ -170,6 +172,7 @@ class GasPolynomialModel(Model):
         self,
         tensors: list,
         margin: float = 1e-3,
+        lyapunov_P: bool = True,
     ) -> None:
         r"""
         Retract general polynomial operator tensors ``[A, H]`` onto the GAS
@@ -244,17 +247,30 @@ class GasPolynomialModel(Model):
         r = A.shape[0]
         eye = bkend.eye(r, dtype=self.dtype, device=self.device)
 
-        # Shift the spectrum into the open left-half plane if A is not already
-        # strictly stable (leave it unchanged otherwise).
-        abscissa = float(bkend.eigvals(A).real.max())
-        shift = abscissa + margin if abscissa >= 0.0 else 0.0
-        A = A - shift * eye
+        # Shift the spectrum to guarantee stability (and positive definiteness of M)
+        if lyapunov_P:
+            # Shift the spectrum into the open left-half plane if A is not already
+            # strictly stable (leave it unchanged otherwise).
+            abscissa = float(bkend.eigvals(A).real.max())
+            shift = abscissa + margin if abscissa >= 0.0 else 0.0
+            A = A - shift * eye
+        else:
+            # Shift the spectrum of sym(A) into the negative definite plane to guarantee M is SPD when P = I
+            sym_A = 0.5 * (A + A.T)
+            abscissa_sym = float(bkend.eigvals(sym_A).real.max())
+            shift = abscissa_sym + margin if abscissa_sym >= 0.0 else 0.0
+            A = A - shift * eye
 
-        # Solve A^T P + P A = -I for the SPD Lyapunov solution P.
-        P_np = solve_continuous_lyapunov(
-            bkend.to_numpy(A.T), bkend.to_numpy(-eye)
-        )
-        P = bkend.asarray(P_np, dtype=self.dtype, device=self.device)
+        if lyapunov_P:
+            # Solve A^T P + P A = -I for the SPD Lyapunov solution P.
+            P_np = solve_continuous_lyapunov(
+                bkend.to_numpy(A.T), bkend.to_numpy(-eye)
+            )
+            P = bkend.asarray(P_np, dtype=self.dtype, device=self.device)
+        else:
+            P = eye
+
+        print(np.linalg.cond(P))
         P = 0.5 * (P + P.T)  # symmetrize against round-off
         Pinv = bkend.inv(P)
 

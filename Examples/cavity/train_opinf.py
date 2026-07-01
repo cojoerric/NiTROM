@@ -99,6 +99,11 @@ training_data = TrainingData(
     nsave_rom=1,
 )
 
+# Galerkin projection (Psi = Phi): (A_r, H_r)
+phi_tot = phi_pre @ Phi
+psi_tot = phi_pre @ Phi
+(A2r, A3r), _ = fom.assemble_petrov_galerkin_tensors(phi_tot, psi_tot, B, [0,0,1,0,0,0,0,0])
+
 # Sweep range
 regs = np.logspace(-6, -1, 50)
 
@@ -132,9 +137,9 @@ for reg in regs:
         best_opinf_reg = reg
         best_opinf_tensors = [np.copy(np.asarray(t)) for t in opinf_model.get_params()]
 
-    # 2) Train GAS-constrained OpInf, initialized from standard OpInf solved operators
+    # 2) Train GAS-constrained OpInf, initialized from Galerkin
     seed = GasPolynomialModel(r, poly_comp, dtype=dtype)
-    seed.retract_general_tensors_to_gas_tensors([opinf_model.A_1, opinf_model.A_2])
+    seed.retract_general_tensors_to_gas_tensors([A2r, A3r], lyapunov_P=False)
     gas_init = [*seed.get_params()]
 
     gas_model = GasPolynomialModel(
@@ -143,7 +148,7 @@ for reg in regs:
     gas = OpInfModule(training_data, gas_model, projection, reg=reg)
 
     # Train GAS-OpInf silently
-    train(gas, n_epochs=1000, lr=1.0, optimizer_type="lbfgs", print_every=0, tol=1e-10)
+    train(gas, n_epochs=1000, lr=1.0, optimizer_type="lbfgs", print_every=1, tol=1e-10)
 
     # Evaluate GAS-OpInf NiTROM-based cost
     gas_registry = ParamRegistry(gas_model, projection)
