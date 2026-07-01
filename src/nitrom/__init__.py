@@ -9,5 +9,6 @@ from .optimization import (
     OpInfModule,
     PolyManifoldInfModule,
     perform_POD,
+    solve_opinf,
     train,
 )
