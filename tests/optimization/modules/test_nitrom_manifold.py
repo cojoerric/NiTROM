@@ -11,7 +11,7 @@ import torch
 from nitrom.latent_space_models.gas_polynomial_model import GasPolynomialModel
 from nitrom.latent_space_models.polynomial_model import PolynomialModel
 from nitrom.optimization import NitromModule, train
-from nitrom.optimization.train import _project_tangent, _retract
+from nitrom.optimization.manifold_optimization import project, to_manifold
 from nitrom.projections.linear_projection import LinearProjection
 from nitrom.roms.param_registry import ParamRegistry
 
@@ -64,12 +64,12 @@ def _module(model) -> NitromModule:
 def check_manifold_gradients(module: NitromModule):
     # Ensure Phi and Psi parameters are on the manifold initially
     with torch.no_grad():
-        module.Phi.copy_(_retract(module.Phi))
-        module.Psi.copy_(_retract(module.Psi))
+        module.Phi.copy_(to_manifold(module.Phi, "grassmann"))
+        module.Psi.copy_(to_manifold(module.Psi, "stiefel"))
 
     # Compute Euclidean gradients
     grads = module.gradient()
-    grad_dict = dict(zip(module.param_names, grads))
+    grad_dict = dict(zip(module.param_names, grads, strict=True))
 
     I_r = torch.eye(R, dtype=DTYPE)
     assert torch.allclose(module.Phi.T @ module.Phi, I_r, atol=1e-12)
@@ -91,7 +91,7 @@ def check_manifold_gradients(module: NitromModule):
             mtype = "euclidean"
 
         # 1. Project Euclidean gradient onto the tangent space of the manifold at param
-        proj_grad = _project_tangent(param, grad, mtype)
+        proj_grad = project(param, grad, mtype)
 
         # 2. Check tangent space algebraic properties for manifold parameters:
         if mtype == "grassmann":
@@ -112,7 +112,7 @@ def check_manifold_gradients(module: NitromModule):
         H = torch.randn(param.shape, generator=g_seed, dtype=DTYPE)
 
         # Project H onto the tangent space of the manifold at param
-        tangent = _project_tangent(param, H, mtype)
+        tangent = project(param, H, mtype)
 
         # Normalize tangent to make sure we don't perturb too far
         norm_tangent = torch.linalg.norm(tangent)
@@ -124,14 +124,14 @@ def check_manifold_gradients(module: NitromModule):
 
             # Perturb forward: param_plus = retract(param + eps * tangent)
             if mtype in ("grassmann", "stiefel"):
-                param.copy_(_retract(param_orig + eps * tangent))
+                param.copy_(to_manifold(param_orig + eps * tangent, mtype))
             else:
                 param.copy_(param_orig + eps * tangent)
             loss_plus = module()
 
             # Perturb backward: param_minus = retract(param - eps * tangent)
             if mtype in ("grassmann", "stiefel"):
-                param.copy_(_retract(param_orig - eps * tangent))
+                param.copy_(to_manifold(param_orig - eps * tangent, mtype))
             else:
                 param.copy_(param_orig - eps * tangent)
             loss_minus = module()
@@ -215,8 +215,8 @@ def test_nitrom_manifold_optimization_run(optimizer_type):
 
     # Enforce initial orthonormality
     with torch.no_grad():
-        module.Phi.copy_(_retract(module.Phi))
-        module.Psi.copy_(_retract(module.Psi))
+        module.Phi.copy_(to_manifold(module.Phi, "grassmann"))
+        module.Psi.copy_(to_manifold(module.Psi, "stiefel"))
 
     # Phi on the Grassmann manifold, Psi on the Stiefel manifold.
     module.set_manifold_types(["Phi", "Psi"], ["grassmann", "stiefel"])
@@ -249,7 +249,7 @@ def test_nitrom_manifold_optimization_run(optimizer_type):
         for name, param in module.named_parameters():
             if name in ["Phi", "Psi"]:
                 mtype = "grassmann" if name == "Phi" else "stiefel"
-                projected = _project_tangent(param, param.grad, mtype)
+                projected = project(param, param.grad, mtype)
                 param.grad.copy_(projected)
 
     # Check tangent space conditions of the final gradients

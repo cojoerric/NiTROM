@@ -1,8 +1,8 @@
 from itertools import combinations
 from string import ascii_lowercase
+from typing import Any
 
-import torch
-
+from ..backend import get_backend
 from .projection import Projection
 
 
@@ -27,10 +27,10 @@ class PolynomialProjection(Projection):
     :param tensors: ``[Phi, Psi, A_k1, A_k2, ...]`` where ``Phi`` and
         ``Psi`` have shape ``(N, r)`` and each ``A_k`` has shape
         ``(N,) + (r,) * k``
-    :type tensors: list[torch.Tensor]
+    :type tensors: list
     """
 
-    def __init__(self, nonlin_poly_comp: list[int], tensors: list[torch.Tensor]):
+    def __init__(self, nonlin_poly_comp: list[int], tensors: list):
         if nonlin_poly_comp != sorted(nonlin_poly_comp):
             raise ValueError(
                 f"nonlin_poly_comp must be in ascending order, got {nonlin_poly_comp}"
@@ -38,11 +38,12 @@ class PolynomialProjection(Projection):
         param_names = ["Phi", "Psi"] + [f"A{k}" for k in nonlin_poly_comp]
         Phi = tensors[0]
         n, r = Phi.shape
+        bkend = get_backend()
         super().__init__(
             n,
             r,
             param_names=param_names,
-            device=Phi.device,
+            device=bkend.device_of(Phi),
             dtype=Phi.dtype,
         )
         self.nonlin_poly_comp = nonlin_poly_comp
@@ -58,22 +59,22 @@ class PolynomialProjection(Projection):
             ss.append(ssk)
         self.einsum_ss = tuple(ss)
 
-    def get_params(self) -> list[torch.Tensor]:
+    def get_params(self) -> list[Any]:
         """Return ``[Phi, Psi, A_k1, A_k2, ...]``."""
         return [getattr(self, name) for name in self.param_names]
 
-    def update(self, params: list[torch.Tensor]) -> None:
+    def update(self, params: list) -> None:
         r"""
         Update all parameters and recompute :math:`S = (\Psi^\top \Phi)^{-1}`.
 
         :param params: ``[Phi, Psi, A_k1, A_k2, ...]`` matching :attr:`param_names`
-        :type params: list[torch.Tensor]
+        :type params: list
         """
-        for name, tensor in zip(self.param_names, params):
+        for name, tensor in zip(self.param_names, params, strict=True):
             setattr(self, name, tensor)
-        self.S = torch.linalg.inv(self.Psi.T @ self.Phi)
+        self.S = self.backend.inv(self.Psi.T @ self.Phi)
 
-    def encode(self, q: torch.Tensor) -> torch.Tensor:
+    def encode(self, q: Any) -> Any:
         r"""
         Encode from full space to reduced space:
 
@@ -82,15 +83,14 @@ class PolynomialProjection(Projection):
             z = \Psi^\top q
 
         :param q: full-space vector of shape ``(N,)`` or ``(m, N)``
-        :type q: torch.Tensor
         :returns: reduced-space vector of shape ``(r,)`` or ``(m, r)``
-        :rtype: torch.Tensor
+        :rtype: backend array
         """
         if q.ndim == 1:
             return self.Psi.T @ q
         return (self.Psi.T @ q.T).T
 
-    def decode(self, z: torch.Tensor) -> torch.Tensor:
+    def decode(self, z: Any) -> Any:
         r"""
         Decode from reduced space to full space:
 
@@ -104,10 +104,10 @@ class PolynomialProjection(Projection):
         where :math:`S = (\Psi^\top \Phi)^{-1}`.
 
         :param z: reduced-space vector of shape ``(r,)`` or ``(m, r)``
-        :type z: torch.Tensor
         :returns: full-space vector of shape ``(N,)`` or ``(m, N)``
-        :rtype: torch.Tensor
+        :rtype: backend array
         """
+        bkend = self.backend
         # Linear part: Phi S z
         if z.ndim == 1:
             q = self.Phi @ (self.S @ z)
@@ -116,19 +116,19 @@ class PolynomialProjection(Projection):
 
         # Nonlinear part: P @ sum_k A_k z^{otimes k}
         # P = I - Phi S Psi^T
-        nonlin = torch.zeros_like(q)
+        nonlin = bkend.zeros_like(q)
         for i, k in enumerate(self.nonlin_poly_comp):
             A_k = getattr(self, f"A{k}")
             if z.ndim == 1:
                 equation = ",".join(self.einsum_ss[i])
                 operands = [A_k] + [z for _ in range(k)]
-                nonlin += torch.einsum(equation, *operands)
+                nonlin += bkend.einsum(equation, *operands)
             else:
                 parts = self.einsum_ss[i]
                 eq_parts = [parts[0]] + [f"...{p}" for p in parts[1:]]
                 equation = ",".join(eq_parts)
                 operands = [A_k] + [z for _ in range(k)]
-                nonlin += torch.einsum(equation, *operands)
+                nonlin += bkend.einsum(equation, *operands)
 
         # Apply projector P = I - Phi S Psi^T
         if z.ndim == 1:
@@ -138,30 +138,29 @@ class PolynomialProjection(Projection):
 
         return q
 
-    def vjp_encode(self, q: torch.Tensor, v: torch.Tensor) -> tuple:
+    def vjp_encode(self, q: Any, v: Any) -> tuple:
         r"""
         VJP of the encoder :math:`z = \Psi^\top q` with respect to all
         parameters.  The encoder does not depend on :math:`A_k`, so those
         gradients are zero.
 
         :param q: full-space vector of shape ``(N,)`` or ``(m, N)``
-        :type q: torch.Tensor
         :param v: upstream adjoint seed :math:`v = \partial J / \partial z`
             of shape ``(r,)`` or ``(m, r)``
-        :type v: torch.Tensor
         :returns: ``(grad_Phi, grad_Psi, grad_A_k1, grad_A_k2, ...)``
-        :rtype: tuple[torch.Tensor, ...]
+        :rtype: tuple
         """
+        bkend = self.backend
         if q.ndim == 1:
-            grad_Psi = torch.outer(q, v)
+            grad_Psi = bkend.outer(q, v)
         else:
             grad_Psi = q.T @ v
-        grads = (torch.zeros_like(self.Phi), grad_Psi)
+        grads = (bkend.zeros_like(self.Phi), grad_Psi)
         for k in self.nonlin_poly_comp:
-            grads += (torch.zeros_like(getattr(self, f"A{k}")),)
+            grads += (bkend.zeros_like(getattr(self, f"A{k}")),)
         return grads
 
-    def vjp_decode(self, z: torch.Tensor, v: torch.Tensor) -> tuple:
+    def vjp_decode(self, z: Any, v: Any) -> tuple:
         r"""
         VJP of the decoder with respect to all parameters.
 
@@ -183,29 +182,30 @@ class PolynomialProjection(Projection):
         where :math:`q = \text{decode}(z)`.
 
         :param z: reduced-space vector of shape ``(r,)`` or ``(m, r)``
-        :type z: torch.Tensor
         :param v: upstream adjoint seed of shape ``(N,)`` or ``(m, N)``
-        :type v: torch.Tensor
         :returns: ``(grad_Phi, grad_Psi, grad_A_k1, grad_A_k2, ...)``
-        :rtype: tuple[torch.Tensor, ...]
+        :rtype: tuple
         """
+        bkend = self.backend
         # Compute g(z) = Σ_k A_k z^{⊗k}
         if z.ndim == 1:
-            g = torch.zeros(self._n, device=z.device, dtype=z.dtype)
+            g = bkend.zeros((self._n,), dtype=self.dtype, device=self.device)
         else:
-            g = torch.zeros(z.shape[0], self._n, device=z.device, dtype=z.dtype)
+            g = bkend.zeros(
+                (z.shape[0], self._n), dtype=self.dtype, device=self.device
+            )
         for i, k in enumerate(self.nonlin_poly_comp):
             A_k = getattr(self, f"A{k}")
             if z.ndim == 1:
                 equation = ",".join(self.einsum_ss[i])
                 operands = [A_k] + [z for _ in range(k)]
-                g += torch.einsum(equation, *operands)
+                g += bkend.einsum(equation, *operands)
             else:
                 parts = self.einsum_ss[i]
                 eq_parts = [parts[0]] + [f"...{p}" for p in parts[1:]]
                 equation = ",".join(eq_parts)
                 operands = [A_k] + [z for _ in range(k)]
-                g += torch.einsum(equation, *operands)
+                g += bkend.einsum(equation, *operands)
 
         # Projected adjoint: w = P^T v = v - Psi S^T Phi^T v
         if v.ndim == 1:
@@ -219,17 +219,17 @@ class PolynomialProjection(Projection):
         grad_As = []
         for i, k in enumerate(self.nonlin_poly_comp):
             ss = self.einsum_ss[i]
+            out_subscript = ss[0]
             if z.ndim == 1:
-                out_subscript = ss[0]
-                in_subscripts = [ss[0][0]] + list(ss[0][1:])
-                equation = ",".join(in_subscripts) + "->" + out_subscript
-                operands = [w] + [z for _ in range(k)]
+                in_subscripts = [ss[0][0], *ss[0][1:]]
             else:
-                out_subscript = ss[0]
-                in_subscripts = [f"...{s}" for s in ss[0]]
-                equation = ",".join(in_subscripts) + "->" + out_subscript
-                operands = [w] + [z for _ in range(k)]
-            grad_As.append(torch.einsum(equation, *operands))
+                # Explicit summed batch index (numpy einsum rejects a broadcast
+                # ellipsis dropped from an explicit output).
+                batch = ascii_lowercase[len(out_subscript)]
+                in_subscripts = [batch + s for s in out_subscript]
+            equation = ",".join(in_subscripts) + "->" + out_subscript
+            operands = [w] + [z for _ in range(k)]
+            grad_As.append(bkend.einsum(equation, *operands))
 
         # --- grad_Phi, grad_Psi ---
         # Full decode: q = Phi S h + g, where h = z - Psi^T g.
@@ -242,7 +242,7 @@ class PolynomialProjection(Projection):
         if z.ndim == 1:
             h = z - self.Psi.T @ g
             Sh = self.S @ h  # (r,)
-            W = torch.outer(v, Sh)  # (N, r)
+            W = bkend.outer(v, Sh)  # (N, r)
             q_decoded = self.Phi @ Sh + g  # (N,)
         else:
             h = z - (self.Psi.T @ g.T).T  # (m, r)
@@ -253,13 +253,13 @@ class PolynomialProjection(Projection):
         grad_Phi = W - self.Psi @ (self.S.T @ PhiTW)  # (N, r)
 
         if v.ndim == 1:
-            grad_Psi = -torch.outer(q_decoded, p)  # (N, r)
+            grad_Psi = -bkend.outer(q_decoded, p)  # (N, r)
         else:
             grad_Psi = -q_decoded.T @ p.T  # (N, r)
 
         return (grad_Phi, grad_Psi) + tuple(grad_As)
 
-    def vjp_decode_state(self, z: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+    def vjp_decode_state(self, z: Any, v: Any) -> Any:
         r"""
         VJP of the decoder with respect to the latent state :math:`z`.
 
@@ -281,12 +281,11 @@ class PolynomialProjection(Projection):
         over which input slot is free.
 
         :param z: reduced-space vector of shape ``(r,)`` or ``(m, r)``
-        :type z: torch.Tensor
         :param v: full-space cotangent of shape ``(N,)`` or ``(m, N)``
-        :type v: torch.Tensor
         :returns: latent-space vector of shape ``(r,)`` or ``(m, r)``
-        :rtype: torch.Tensor
+        :rtype: backend array
         """
+        bkend = self.backend
         batched = z.ndim == 2
 
         # Linear part S^T Phi^T v, and w = P^T v.
@@ -296,7 +295,7 @@ class PolynomialProjection(Projection):
         else:
             p = (v @ self.Phi) @ self.S  # (m, r)
             w = v - p @ self.Psi.T  # (m, N)
-        out = p.clone()
+        out = bkend.copy(p)
 
         # Nonlinear part: sum_k (dg_k/dz)^T w.
         for i, k in enumerate(self.nonlin_poly_comp):
@@ -314,6 +313,6 @@ class PolynomialProjection(Projection):
                         + "->..."
                         + free
                     )
-                out = out + torch.einsum(eq, A_k, w, *([z] * (k - 1)))
+                out = out + bkend.einsum(eq, A_k, w, *([z] * (k - 1)))
 
         return out

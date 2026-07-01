@@ -1,6 +1,6 @@
-import torch
-import torch.nn as nn
+from typing import Any
 
+from nitrom.backend import get_backend
 from nitrom.projections.polynomial_projection import PolynomialProjection
 from nitrom.training_data import TrainingData
 
@@ -38,34 +38,34 @@ class PolyManifoldInfModule(InferenceModule):
         order, e.g. ``[2, 3]``
     :type nonlin_poly_comp: list[int]
     :param Phi: trial basis of shape ``(N, r)``
-    :type Phi: torch.Tensor
     :param Psi: test basis of shape ``(N, r)``.  If ``None``, defaults
         to ``Phi`` (orthogonal projection).
-    :type Psi: torch.Tensor or None
     :param reg: Tikhonov regularization weight on the ``A_k`` tensors
     :type reg: float
     :param initial_guess: optional list of initial ``A_k`` tensors,
         one per entry in ``nonlin_poly_comp``.  If ``None``, tensors are
         initialized to zero.
-    :type initial_guess: list[torch.Tensor] or None
+    :type initial_guess: list or None
     """
 
     def __init__(
         self,
         training_data: TrainingData,
         nonlin_poly_comp: list[int],
-        Phi: torch.Tensor,
-        Psi: torch.Tensor | None = None,
+        Phi: Any,
+        Psi: Any | None = None,
         reg: float = 0.0,
-        initial_guess: list[torch.Tensor] | None = None,
+        initial_guess: list | None = None,
     ) -> None:
         super().__init__()
+        bkend = get_backend()
+        self.backend = bkend
 
         if Psi is None:
             Psi = Phi
 
         N, r = Phi.shape
-        dev = Phi.device
+        dev = bkend.device_of(Phi)
         dtype = Phi.dtype
 
         self.nonlin_poly_comp = nonlin_poly_comp
@@ -79,11 +79,11 @@ class PolyManifoldInfModule(InferenceModule):
         self.nt = nt
 
         # Weight matrix
-        W = (1.0 / training_data.weights.view(-1)).repeat_interleave(nt)
-        self.W = torch.diag(W)
+        W = bkend.repeat_interleave(1.0 / training_data.weights.reshape(-1), nt)
+        self.W = bkend.diag(W)
 
         # Precompute encoded data: Z of shape (ntraj, r, nt)
-        self.Z = torch.einsum("ij,kil->kjl", Psi, self.X)
+        self.Z = bkend.einsum("ij,kil->kjl", Psi, self.X)
 
         # Build initial A_k tensors
         if initial_guess is not None:
@@ -93,24 +93,21 @@ class PolyManifoldInfModule(InferenceModule):
                     f"expected {len(nonlin_poly_comp)}"
                 )
             proj_tensors = [Phi, Psi] + [
-                t.to(device=dev, dtype=dtype) for t in initial_guess
+                bkend.asarray(t, dtype=dtype, device=dev) for t in initial_guess
             ]
         else:
             proj_tensors = [Phi, Psi] + [
-                torch.zeros((N,) + (r,) * k, device=dev, dtype=dtype)
+                bkend.zeros((N,) + (r,) * k, device=dev, dtype=dtype)
                 for k in nonlin_poly_comp
             ]
 
         # Create the underlying PolynomialProjection
         self.proj = PolynomialProjection(nonlin_poly_comp, proj_tensors)
 
-        # Register only the A_k tensors as nn.Parameters (Phi, Psi are fixed)
+        # Register only the A_k tensors as parameters (Phi, Psi are fixed)
         for k in nonlin_poly_comp:
             name = f"A{k}"
-            self.register_parameter(
-                name,
-                nn.Parameter(getattr(self.proj, name).clone()),
-            )
+            self.register_parameter(name, bkend.copy(getattr(self.proj, name)))
 
     @property
     def _trainable_names(self) -> list[str]:
@@ -118,13 +115,13 @@ class PolyManifoldInfModule(InferenceModule):
         return [f"A{k}" for k in self.nonlin_poly_comp]
 
     def _sync_to_proj(self) -> None:
-        """Push current nn.Parameters into the underlying projection."""
+        """Push current parameters into the underlying projection."""
         params = [self.proj.Phi, self.proj.Psi] + [
             getattr(self, name) for name in self._trainable_names
         ]
         self.proj.update(params)
 
-    def forward(self) -> torch.Tensor:
+    def forward(self) -> Any:
         r"""
         Evaluate the reconstruction cost.
 
@@ -134,42 +131,46 @@ class PolyManifoldInfModule(InferenceModule):
                 + \lambda \sum_k \lVert A_k \rVert^2
 
         :returns: scalar loss
-        :rtype: torch.Tensor
         """
+        bkend = self.backend
         self._sync_to_proj()
 
         # Z_flat: (ntraj*nt, r),  X_flat: (ntraj*nt, N)
-        Z_flat = self.Z.permute(0, 2, 1).reshape(-1, self.proj.latent_space_dimension)
-        X_flat = self.X.permute(0, 2, 1).reshape(-1, self.proj.ambient_space_dimension)
+        Z_flat = bkend.permute(self.Z, (0, 2, 1)).reshape(
+            -1, self.proj.latent_space_dimension
+        )
+        X_flat = bkend.permute(self.X, (0, 2, 1)).reshape(
+            -1, self.proj.ambient_space_dimension
+        )
 
         X_hat = self.proj.decode(Z_flat)  # (ntraj*nt, N)
 
         R = X_flat - X_hat  # (ntraj*nt, N)
-        # Reshape to (N, ntraj*nt) for weighted norm
+        # Reshape to (N, ntraj*nt) for the weighted norm
         R_flat = R.T
         cost = ((R_flat @ self.W) * R_flat).sum()
 
         # Regularization on A_k
         for name in self._trainable_names:
-            cost = cost + self.reg * torch.norm(getattr(self.proj, name)) ** 2
+            cost = cost + self.reg * bkend.vector_norm(getattr(self.proj, name)) ** 2
 
         return cost
 
-    def gradient(self) -> list[torch.Tensor]:
+    def gradient(self) -> list:
         r"""
         Compute analytic gradients of the cost w.r.t. the trainable
         ``A_k`` tensors using the projection's VJP.
 
         :returns: list of gradient tensors, one per ``A_k``
-        :rtype: list[torch.Tensor]
         """
+        bkend = self.backend
         self._sync_to_proj()
 
         r = self.proj.latent_space_dimension
         N = self.proj.ambient_space_dimension
 
-        Z_flat = self.Z.permute(0, 2, 1).reshape(-1, r)
-        X_flat = self.X.permute(0, 2, 1).reshape(-1, N)
+        Z_flat = bkend.permute(self.Z, (0, 2, 1)).reshape(-1, r)
+        X_flat = bkend.permute(self.X, (0, 2, 1)).reshape(-1, N)
 
         X_hat = self.proj.decode(Z_flat)
 

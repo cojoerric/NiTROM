@@ -1,54 +1,55 @@
-import torch
+from ..backend import get_backend
 
 
 def create_initial_guess(A, H=None, r=None):
     """
     Build initialization tensors for the globally stable model from A (and optional H).
-    The construction uses Q = I, J = skew(A), R = -sym(A) projected to PSD, and Hhat = 0.5 * H.
-    Note: the resulting H corresponds to the antisymmetric part of the input H.
+    Uses Q = I, J = skew(A), R = -sym(A) projected to PSD, and Hhat = 0.5 * H.
     """
+    bkend = get_backend()
     if r is None:
         r = A.shape[0]
-
-    device = A.device
+    device = bkend.device_of(A)
     dtype = A.dtype
 
     # Initialize Q as identity
-    Qhat = torch.eye(r, dtype=dtype, device=device)
+    Qhat = bkend.eye(r, dtype=dtype, device=device)
 
     # Decompose A into symmetric and skew-symmetric parts
     A_sym = 0.5 * (A + A.T)
     A_skew = 0.5 * (A - A.T)
 
-    # Make sure symmetric part is negative definite for stability
-    eigvals, eigvecs = torch.linalg.eigh(A_sym)
-    neg_eigvals = torch.where(eigvals < 0, eigvals, -0.1 * torch.ones_like(eigvals))
-    A_sym_stable = eigvecs @ torch.diag(neg_eigvals) @ eigvecs.T
+    # Make sure the symmetric part is negative definite for stability
+    eigvals, eigvecs = bkend.eigh(A_sym)
+    neg_eigvals = bkend.where(eigvals < 0, eigvals, -0.1 * bkend.ones_like(eigvals))
+    A_sym_stable = eigvecs @ bkend.diag(neg_eigvals) @ eigvecs.T
 
     # J = Jhat - Jhat.T -> choose Jhat so J matches the skew part of A
     Jhat = 0.5 * A_skew
 
     R_mat = -A_sym_stable
     try:
-        Rhat = torch.linalg.cholesky(R_mat)
-    except:
-        # If Cholesky fails, use eigenvector decomposition
-        eigvals, eigvecs = torch.linalg.eigh(R_mat)
+        Rhat = bkend.cholesky(R_mat)
+    except Exception:
+        # If Cholesky fails, use the eigenvector decomposition
+        eigvals, eigvecs = bkend.eigh(R_mat)
         Rhat = (
-            eigvecs @ torch.diag(torch.sqrt(torch.clamp(eigvals, min=1e-6))) @ eigvecs.T
+            eigvecs
+            @ bkend.diag(bkend.sqrt(bkend.clip(eigvals, 1e-6, None)))
+            @ eigvecs.T
         )
 
-    # For H tensor, either use the provided H or initialize to zeros
+    # For the H tensor, either use the provided H or initialize to zeros
     if H is not None:
-        Hhat = 0.5 * H.clone()
+        Hhat = 0.5 * bkend.copy(H)
     else:
-        Hhat = torch.zeros((r, r, r), dtype=dtype, device=device)
+        Hhat = bkend.zeros((r, r, r), dtype=dtype, device=device)
 
     return {"Jhat": Jhat, "Rhat": Rhat, "Qhat": Qhat, "Hhat": Hhat}
 
 
 def compute_Q(Qhat):
-    Q_inv = torch.linalg.inv(Qhat)
+    Q_inv = get_backend().inv(Qhat)
     Q = Q_inv @ Q_inv.T
     return Q, Q_inv
 
@@ -60,7 +61,7 @@ def compute_JR(Jhat, Rhat):
 
 
 def compute_H(Hhat, Q):
-    H2 = Hhat.permute(2, 1, 0)
+    H2 = get_backend().permute(Hhat, (2, 1, 0))
     M_tensor = Hhat - H2
     H = M_tensor @ Q
     return H
@@ -90,10 +91,11 @@ def construct_operators(tensors, poly_comp):
 
 
 def propagate_gradients(grads, tensors, tensors_hat, poly_comp):
-    grad_tensors = [torch.zeros_like(tensor_hat) for tensor_hat in tensors_hat]
+    bkend = get_backend()
+    grad_tensors = [bkend.zeros_like(tensor_hat) for tensor_hat in tensors_hat]
     Q = tensors[0]
     Q_inv = tensors[1]
-    grad_Q = torch.zeros_like(Q)
+    grad_Q = bkend.zeros_like(Q)
 
     if 1 in poly_comp:
         J = tensors[2]
@@ -110,12 +112,12 @@ def propagate_gradients(grads, tensors, tensors_hat, poly_comp):
     if 2 in poly_comp:
         Hhat = tensors_hat[-1]
         grad_H = grads[-1]
-        S = torch.tensordot(grad_H, Q, dims=([2], [0]))
-        grad_Hhat = S - S.permute(2, 1, 0)
+        S = bkend.tensordot(grad_H, Q, axes=([2], [0]))
+        grad_Hhat = S - bkend.permute(S, (2, 1, 0))
         grad_tensors[-1] = grad_Hhat
 
-        G = Hhat - Hhat.permute(2, 1, 0)
-        grad_Q += torch.tensordot(grad_H, G, dims=([0, 1], [0, 1])).T
+        G = Hhat - bkend.permute(Hhat, (2, 1, 0))
+        grad_Q += bkend.tensordot(grad_H, G, axes=([0, 1], [0, 1])).T
 
     grad_Qhat = -Q_inv.T @ (grad_Q + grad_Q.T) @ Q
     grad_tensors[0] = grad_Qhat
@@ -123,14 +125,33 @@ def propagate_gradients(grads, tensors, tensors_hat, poly_comp):
     return tuple(grad_tensors)
 
 
+def perform_POD(pool, r):
+    bkend = get_backend()
+    device = pool.device
+    dtype = pool.dtype
+
+    N = pool.n_snapshots * pool.n_traj
+    X = bkend.zeros((pool.X.shape[1], N), device=device, dtype=dtype)
+    for i in range(pool.n_traj):
+        X[:, i * pool.n_snapshots : (i + 1) * pool.n_snapshots] = pool.X[i,]
+
+    phi_pod, _, _ = bkend.svd(X, full_matrices=False)
+    phi_pod = phi_pod[:, :r]
+
+    return phi_pod
+
+
 def finite_difference_gradcheck(model, n_samples=10, eps=1e-6, seed=0):
+    """Legacy finite-difference gradient check (torch-only debug utility)."""
+    import torch
+
     torch.manual_seed(seed)
     cost_fn = model.cost_fn
     grad_fn = model.grad_fn
     params = model.params
     grads = grad_fn(*model.param_tuple())
 
-    grad_map = dict(zip(["Phi", "Psi"] + params.tensor_names(), grads))
+    grad_map = dict(zip(["Phi", "Psi"] + params.tensor_names(), grads, strict=False))
     tensor_names = params.tensor_names()
     print("Finite-difference check (tensors only):")
 
@@ -166,21 +187,6 @@ def finite_difference_gradcheck(model, n_samples=10, eps=1e-6, seed=0):
             mean_abs_err /= n_samples
             mean_rel_err /= n_samples
             print(
-                f"  {name}: mean_abs_err={mean_abs_err:.3e}, mean_rel_err={mean_rel_err:.3e}"
+                f"  {name}: mean_abs_err={mean_abs_err:.3e}, "
+                f"mean_rel_err={mean_rel_err:.3e}"
             )
-
-
-def perform_POD(pool, r):
-
-    device = pool.device
-    dtype = pool.dtype
-
-    N = pool.n_snapshots * pool.n_traj
-    X = torch.zeros((pool.X.shape[1], N), device=device, dtype=dtype)
-    for i in range(pool.n_traj):
-        X[:, i * pool.n_snapshots : (i + 1) * pool.n_snapshots] = pool.X[i,]
-
-    phi_pod, _, _ = torch.linalg.svd(X, full_matrices=False)
-    phi_pod = phi_pod[:, :r]
-
-    return phi_pod

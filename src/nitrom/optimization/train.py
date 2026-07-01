@@ -1,44 +1,9 @@
 from collections.abc import Callable
 from typing import Any
 
-import torch
-import torch.distributed as dist
-
+from ..backend import get_backend
+from .manifold_optimization import project, to_manifold, transport
 from .modules.base import InferenceModule
-
-
-def _project_tangent(X: torch.Tensor, G: torch.Tensor, manifold: str) -> torch.Tensor:
-    """Project Euclidean gradient G onto the tangent space at X."""
-    if manifold == "grassmann":
-        return G - X @ (X.T @ G)
-    elif manifold == "stiefel":
-        XtG = X.T @ G
-        sym_XtG = 0.5 * (XtG + XtG.T)
-        return G - X @ sym_XtG
-    return G
-
-
-def _retract(X: torch.Tensor) -> torch.Tensor:
-    """Retract matrix X to the Stiefel/Grassmann manifold using QR decomposition."""
-    Q, R = torch.linalg.qr(X)
-    d = torch.diagonal(R, dim1=-2, dim2=-1)
-    ph = d.sign()
-    ph[ph == 0] = 1.0
-    return Q * ph.unsqueeze(-2)
-
-
-def _transport_optimizer_states(optimizer, model, manifold_types) -> None:
-    """Transport momentum buffers in optimizer state to the new tangent spaces."""
-    for name, param in model.named_parameters():
-        if name in manifold_types:
-            state = optimizer.state.get(param)
-            if state is None:
-                continue
-            for key in ["exp_avg", "momentum_buffer"]:
-                if key in state:
-                    buf = state[key]
-                    proj_buf = _project_tangent(param, buf, manifold_types[name])
-                    buf.copy_(proj_buf)
 
 
 def train(
@@ -49,59 +14,40 @@ def train(
     print_every: int = 100,
     tol: float = 1e-10,
     n_restarts: int = 0,
-    scheduler_creator: Callable[[torch.optim.Optimizer], Any] | None = None,
+    scheduler_creator: Callable[[Any], Any] | None = None,
 ) -> InferenceModule:
     r"""
-    Train an :class:`InferenceModule` by minimizing its cost using the
-    module's analytic gradients.
+    Train an :class:`InferenceModule` by minimizing its cost using the module's
+    analytic gradients.
 
     Works for any concrete inference module (operator inference,
-    polynomial-manifold inference, NiTROM, ...) because it relies only on
-    the :class:`InferenceModule` contract: ``model()`` returns the scalar
-    cost and ``model.gradient()`` returns the analytic gradients in
-    :meth:`~torch.nn.Module.parameters` order.
+    polynomial-manifold inference, NiTROM, ...) because it relies only on the
+    :class:`InferenceModule` contract: ``model()`` returns the scalar cost and
+    ``model.gradient()`` returns the analytic gradients in :meth:`parameters`
+    order.
 
-    In a distributed setting (``torch.distributed`` initialized),
-    gradients are averaged across ranks via ``all_reduce`` before
-    each optimizer step.
+    The optimizer backend follows the active array backend: **torch** uses
+    ``torch.optim`` (Adam/SGD/L-BFGS, with distributed all-reduce when
+    ``torch.distributed`` is initialized); **numpy** uses a unified first-order
+    driver in which every optimizer (Adam/SGD/L-BFGS) supplies only a search
+    direction and the step always comes from a strong-Wolfe line search with an
+    Armijo backtracking fallback (:func:`~nitrom.optimization.manifold_optimization.riemannian_optimize`).
+    Riemannian (Grassmann/Stiefel) optimization -- configured per parameter via
+    :meth:`InferenceModule.set_manifold_types` -- is applied on either backend;
+    on numpy it uses retraction and vector transport throughout.
 
-    :param model: the inference module (already configured with training
-        data, basis, regularization, etc.)
-    :type model: InferenceModule
-    :param n_epochs: number of optimization iterations
-    :type n_epochs: int
+    :param model: the inference module (already configured with data, basis, etc.)
+    :param n_epochs: number of optimization iterations (max iterations for scipy)
     :param lr: learning rate
-    :type lr: float
     :param optimizer_type: ``"adam"``, ``"sgd"``, or ``"lbfgs"``
-    :type optimizer_type: str
-    :param print_every: print the loss every *print_every* epochs
-        (only on rank 0)
-    :type print_every: int
-    :param tol: convergence tolerance on the relative change in loss;
-        training stops early if ``|loss - loss_prev| / |loss_prev| < tol``
-    :type tol: float
-    :param n_restarts: number of times to restart the optimizer (clearing its
-        state, e.g. the L-BFGS history) when the relative-change criterion
-        trips.  Quasi-Newton methods often *stall* at a non-stationary point --
-        a line-search failure with a still-nonzero gradient -- and a fresh
-        optimizer escapes it.  After a restart the run continues; it stops once
-        a restart no longer reduces the loss or the restart budget is spent.
-        ``0`` (default) reproduces the plain stop-on-stall behavior.
-    :type n_restarts: int
-    :param scheduler_creator: a callable that takes a ``torch.optim.Optimizer``
-        and returns a learning rate scheduler instance. If ``None``, no learning
-        rate scheduling is applied.
-    :type scheduler_creator: Callable[[torch.optim.Optimizer], Any] or None
+    :param print_every: print the loss every *print_every* epochs (rank 0)
+    :param tol: convergence tolerance on the relative change in loss
+    :param n_restarts: number of optimizer restarts when the loss stalls
+    :param scheduler_creator: (torch backend only) callable mapping an optimizer
+        to a learning-rate scheduler; ``None`` for no scheduling
     :returns: the trained model
-    :rtype: InferenceModule
     """
-    is_distributed = dist.is_initialized()
-    rank = dist.get_rank() if is_distributed else 0
-
-    # Per-parameter manifold types are configured on the module itself (via
-    # InferenceModule.set_manifold_types).  Build a name -> manifold map for the
-    # non-Euclidean parameters, which the steps below retract and tangent-project.
-    normalized_manifold_types = {
+    manifolds = {
         name: mtype
         for (name, _), mtype in zip(
             model.named_parameters(), model.get_manifold_types(), strict=True
@@ -109,15 +55,161 @@ def train(
         if mtype != "euclidean"
     }
 
-    # Synchronize parameters across ranks so every process starts the
-    # data-parallel run from identical weights.  The all-reduced gradient is
-    # only meaningful when all ranks sit at the same parameter point, which
-    # would otherwise be violated by any per-rank randomness at construction.
+    if get_backend().is_numpy:
+        return _train_numpy(
+            model, manifolds, n_epochs, lr, optimizer_type,
+            print_every, tol, n_restarts,
+        )
+    return _train_torch(
+        model, manifolds, n_epochs, lr, optimizer_type,
+        print_every, tol, n_restarts, scheduler_creator,
+    )
+
+
+# ---------------------------------------------------------------------------
+# NumPy path: manual Adam/SGD + scipy L-BFGS
+# ---------------------------------------------------------------------------
+
+def _train_numpy(
+    model, manifolds, n_epochs, lr, optimizer_type, print_every, tol, n_restarts,
+):
+    import numpy as np
+
+    from ..backend import mpi_allreduce_scalar, mpi_allreduce_sum, mpi_rank_size
+
+    # Trajectory parallelism (MPI): each rank holds a shard of trajectories, so
+    # model()/model.gradient() are partial sums; Allreduce(SUM) reconstructs the
+    # global cost/gradient (the weights already carry the global normalization).
+    # Every rank runs the identical optimizer on the reduced values, in lockstep.
+    rank, size = mpi_rank_size()
+    distributed = size > 1
+    printable = bool(print_every) and rank == 0
+    names = [n for n, _ in model.named_parameters()]
+
+    def set_p(name, val):
+        model._params[name] = val
+        object.__setattr__(model, name, val)
+
+    def cost():
+        c = float(model())
+        return mpi_allreduce_scalar(c) if distributed else c
+
+    def grads_projected():
+        g = model.gradient()
+        if distributed:
+            g = [mpi_allreduce_sum(np.asarray(gi)) for gi in g]
+        for i, name in enumerate(names):
+            if manifolds.get(name):
+                g[i] = project(model._params[name], g[i], manifolds[name])
+        return g
+
+    if optimizer_type not in ("adam", "sgd", "lbfgs"):
+        raise ValueError(
+            f"optimizer_type must be 'adam', 'sgd', or 'lbfgs', "
+            f"got '{optimizer_type}'"
+        )
+
+    # Unified optimizer: each type only supplies a search *direction*; the step
+    # always comes from a strong-Wolfe line search with an Armijo backtracking
+    # fallback (:func:`riemannian_optimize`).  Euclidean parameters are handled
+    # as the trivial manifold, so this one path covers every case.
+    from .manifold_optimization import (
+        AdamDirection,
+        LBFGSDirection,
+        SGDDirection,
+        riemannian_optimize,
+    )
+
+    mlist = [manifolds.get(n, "euclidean") for n in names]
+
+    def cost_fn(xs):
+        for name, arr in zip(names, xs, strict=True):
+            set_p(name, arr)
+        return cost()
+
+    def rgrad_fn(xs):
+        for name, arr in zip(names, xs, strict=True):
+            set_p(name, arr)
+        return grads_projected()
+
+    def make_direction():
+        if optimizer_type == "lbfgs":
+            return LBFGSDirection(history_size=100)
+        if optimizer_type == "adam":
+            return AdamDirection(lr)
+        return SGDDirection(lr)
+
+    def progress(it, f, gnorm):
+        if printable and it % print_every == 0:
+            print(f"iter {it:6d} | Loss: {f:.6e} | GradNorm: {gnorm:.6e}")
+
+    x0 = [np.asarray(model._params[n], dtype=float) for n in names]
+    # n_restarts > 0 -> multi-start: perturb the init to explore neighbouring
+    # basins of a non-convex objective and keep the best.
+    scale = 0.05 * (float(np.mean([np.abs(a).mean() for a in x0])) + 1e-8)
+    rng = np.random.default_rng(0)
+    best_xs, best_f = x0, float("inf")
+    for attempt in range(n_restarts + 1):
+        xs0 = (
+            [a.copy() for a in x0]
+            if attempt == 0
+            else [a + scale * rng.standard_normal(a.shape) for a in x0]
+        )
+        xk, fk = riemannian_optimize(
+            cost_fn, rgrad_fn, xs0, mlist, make_direction(),
+            max_iter=n_epochs, gtol=max(tol, 1e-10),
+            ftol=max(tol, 1e-12), callback=progress,
+        )
+        if fk < best_f:
+            best_xs, best_f = xk, fk
+        if printable:
+            tag = "run" if attempt == 0 else f"multistart {attempt}/{n_restarts}"
+            print(
+                f"{optimizer_type} (strong-Wolfe/Armijo, {tag}): "
+                f"Loss {fk:.6e} | best {best_f:.6e}"
+            )
+    for name, arr in zip(names, best_xs, strict=True):
+        set_p(name, arr)
+    return model
+
+
+# ---------------------------------------------------------------------------
+# Torch path: torch.optim (+ distributed), unchanged
+# ---------------------------------------------------------------------------
+
+def _transport_optimizer_states(optimizer, model, manifold_types) -> None:
+    """Vector-transport the optimizer's momentum buffers to the new tangent spaces."""
+    bkend = get_backend()
+    for name, param in model.named_parameters():
+        if name in manifold_types:
+            state = optimizer.state.get(param)
+            if state is None:
+                continue
+            # First-moment / momentum buffers are tangent vectors: transport them.
+            for key in ["exp_avg", "momentum_buffer"]:
+                if key in state:
+                    buf = state[key]
+                    buf.copy_(transport(param, buf, manifold_types[name]))
+            # Second moment (Adam v): per-coordinate variance -> transport and |.|.
+            if "exp_avg_sq" in state:
+                buf = state["exp_avg_sq"]
+                buf.copy_(bkend.abs(transport(param, buf, manifold_types[name])))
+
+
+def _train_torch(
+    model, normalized_manifold_types, n_epochs, lr, optimizer_type,
+    print_every, tol, n_restarts, scheduler_creator,
+):
+    import torch
+    import torch.distributed as dist
+
+    is_distributed = dist.is_initialized()
+    rank = dist.get_rank() if is_distributed else 0
+
     if is_distributed:
         for param in model.parameters():
             dist.broadcast(param.data, src=0)
 
-    # Build the optimizer (a fresh one is also created on each restart).
     def _make_optimizer():
         if optimizer_type == "adam":
             return torch.optim.Adam(model.parameters(), lr=lr)
@@ -125,9 +217,7 @@ def train(
             return torch.optim.SGD(model.parameters(), lr=lr)
         if optimizer_type == "lbfgs":
             return torch.optim.LBFGS(
-                model.parameters(),
-                lr=lr,
-                max_iter=10,
+                model.parameters(), lr=lr, max_iter=10,
                 line_search_fn="strong_wolfe",
             )
         raise ValueError(
@@ -138,13 +228,11 @@ def train(
     optimizer = _make_optimizer()
     scheduler = scheduler_creator(optimizer) if scheduler_creator is not None else None
 
-    def _compute_and_assign_grads() -> torch.Tensor:
-        """Evaluate cost, compute analytic gradients, and assign them."""
-        # Retract manifold parameters to the manifold before evaluating cost
+    def _compute_and_assign_grads():
         with torch.no_grad():
             for name, param in model.named_parameters():
                 if name in normalized_manifold_types:
-                    param.copy_(_retract(param))
+                    param.copy_(to_manifold(param, normalized_manifold_types[name]))
 
         optimizer.zero_grad()
         loss = model()
@@ -152,24 +240,17 @@ def train(
         for param, grad in zip(model.parameters(), grads, strict=True):
             param.grad = grad.contiguous().clone()
         if is_distributed:
-            # The cost and gradient are sums over trajectories whose weights
-            # already carry the global normalization, so each rank holds a
-            # partial sum and ReduceOp.SUM reconstructs the true global value
-            # (no division by world_size).
             for param in model.parameters():
                 dist.all_reduce(param.grad, op=dist.ReduceOp.SUM)
-            # Reduce the loss too so the optimizer's line search and the
-            # convergence test below operate on the same global cost on every
-            # rank -- otherwise ranks could stop at different epochs and
-            # deadlock on the next collective.
             loss = loss.detach().clone()
             dist.all_reduce(loss, op=dist.ReduceOp.SUM)
 
-        # Project Euclidean gradients onto tangent spaces
         with torch.no_grad():
             for name, param in model.named_parameters():
                 if name in normalized_manifold_types and param.grad is not None:
-                    projected = _project_tangent(param, param.grad, normalized_manifold_types[name])
+                    projected = project(
+                        param, param.grad, normalized_manifold_types[name]
+                    )
                     param.grad.copy_(projected)
 
         return loss
@@ -185,48 +266,39 @@ def train(
             loss = _compute_and_assign_grads()
             optimizer.step()
 
-        # Retract manifold parameters to the manifold after the step
         with torch.no_grad():
             for name, param in model.named_parameters():
                 if name in normalized_manifold_types:
-                    param.copy_(_retract(param))
+                    param.copy_(to_manifold(param, normalized_manifold_types[name]))
                     if is_distributed:
                         dist.broadcast(param.data, src=0)
 
-        # Transport optimizer state buffers (exp_avg, momentum_buffer)
         _transport_optimizer_states(optimizer, model, normalized_manifold_types)
 
         loss_val = loss.item()
 
-        # Step scheduler if present
         if scheduler is not None:
             if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
                 scheduler.step(loss_val)
             else:
                 scheduler.step()
 
-        # Monitor: gradient norm at the current iterate (assigned param.grads).
         grad_norm = torch.sqrt(
-            sum(
-                (p.grad**2).sum()
-                for p in model.parameters()
-                if p.grad is not None
-            )
+            sum((p.grad**2).sum() for p in model.parameters() if p.grad is not None)
         ).item()
         if rank == 0 and (epoch % print_every == 0 or epoch == n_epochs - 1):
-            lr_str = f" | LR: {optimizer.param_groups[0]['lr']:.2e}" if scheduler is not None else ""
+            lr_str = (
+                f" | LR: {optimizer.param_groups[0]['lr']:.2e}"
+                if scheduler is not None else ""
+            )
             print(
                 f"Epoch {epoch:6d} | Loss: {loss_val:.6e} "
                 f"| GradNorm: {grad_norm:.6e}{lr_str}"
             )
 
-        # Convergence check
         if loss_prev is not None and abs(loss_prev) > 0:
             rel_change = abs(loss_val - loss_prev) / abs(loss_prev)
             if rel_change < tol:
-                # The optimizer stalled.  Restart it (clearing its state) if we
-                # still have a restart budget and the last restart reduced the
-                # loss; otherwise stop.
                 improved = (
                     loss_at_last_restart == float("inf")
                     or loss_at_last_restart - loss_val

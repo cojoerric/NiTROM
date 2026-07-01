@@ -1,10 +1,10 @@
 import os
+import pickle
 
 import fom_class
-import torch
-import torch.distributed as dist
+import numpy as np
 
-from nitrom.backend import cleanup_distributed, setup_distributed
+from nitrom.backend import mpi_allreduce_scalar, mpi_rank_size, set_backend
 from nitrom.latent_space_models.gas_polynomial_model import GasPolynomialModel
 from nitrom.latent_space_models.polynomial_model import PolynomialModel
 from nitrom.optimization import OpInfModule, train
@@ -12,11 +12,21 @@ from nitrom.projections.linear_projection import LinearProjection
 from nitrom.training_data import TrainingData, TrainingPool
 from nitrom.utils import compute_POD
 
-# Distributed setup (falls back to a single process when not launched with
-# torchrun).  Run in parallel with, e.g.:
-#     torchrun --standalone --nproc_per_node=2 train_opinf.py
-device, rank, world_size = setup_distributed()
-dtype = torch.float64
+# Pure-numpy CPU run (lightweight; no torch).  Trajectory-parallel with MPI:
+#     mpiexec -n 4 python train_opinf.py
+set_backend("numpy")
+dtype = np.float64
+rank, world_size = mpi_rank_size()
+
+
+def printr(*a, **k):
+    if rank == 0:
+        print(*a, **k)
+
+
+def gcost(m):
+    c = float(m())
+    return mpi_allreduce_scalar(c) if world_size > 1 else c
 
 traj_path = "./trajectories/"
 models_dir = "./models/"
@@ -28,64 +38,43 @@ if rank == 0:
     os.makedirs(models_dir, exist_ok=True)
 
 
-def printr(*args, **kwargs) -> None:
-    """Print on rank 0 only."""
-    if rank == 0:
-        print(*args, **kwargs)
-
-
-def global_cost(module) -> float:
-    """Cost summed across ranks (``module()`` returns the local partial cost)."""
-    cost = module().detach().clone()
-    if world_size > 1:
-        dist.all_reduce(cost, op=dist.ReduceOp.SUM)
-    return cost.item()
-
-
-def save_checkpoint(tensors, kind: str, path: str, gas_params=None) -> None:
-    """
-    Save a self-contained ROM checkpoint: the POD basis and the *physical*
-    operators ``[A, H, B]`` (so a test script can rebuild a PolynomialModel and
-    roll out on new data without any training data).  ``gas_params`` keeps the
-    GAS coordinates ``[K, R, Q, S, B]`` for inspection (GAS model only).
-    """
+def save_checkpoint(tensors, kind, path, gas_params=None):
+    """Save a self-contained ROM checkpoint (POD basis + physical operators)."""
     ckpt = {
         "kind": kind,
         "r": r,
         "poly_comp": poly_comp,
         "forcing_config": forcing_config,
-        "Phi": Phi.detach().cpu().clone(),
-        "tensors": [t.detach().cpu().clone() for t in tensors],
+        "Phi": np.asarray(Phi),
+        "tensors": [np.asarray(t) for t in tensors],
         "gas_params": gas_params,
     }
-    torch.save(ckpt, path)
+    with open(path, "wb") as f:
+        pickle.dump(ckpt, f)
     print(f"saved -> {path}")
 
 
-# %% Load the (rank-sharded) trajectories into a TrainingPool
+# %% Load the trajectories into a TrainingPool
 
+# rank/world_size are auto-detected from MPI, so they need not be passed here.
 pool = TrainingPool(
     n_traj=n_traj,
     fname_traj=traj_path + "traj_%03d.npy",
     fname_time=traj_path + "time.npy",
     dtype=dtype,
-    device=device,
-    rank=rank,
-    world_size=world_size,
     fname_weights=traj_path + "weight_%03d.npy",
     fname_forcing=traj_path + "forcing_%03d.pkl",
     fname_derivs=traj_path + "deriv_%03d.npy",
 )
 
-# %% POD basis (rank r).  compute_POD gathers on root and, by default,
-# broadcasts the basis to every rank -- so Phi is identical everywhere.
+# %% POD basis (rank r)
 
 U, _, _ = compute_POD(pool, normalize=True)
 Phi = U[:, :r]  # (N, r)
 projection = LinearProjection([Phi, Phi])  # orthogonal (Psi = Phi)
 
 # B = encode(B_fom) (fixed, not learned); the toy FOM is driven by B_fom=ones(N,1).
-B_fom = torch.ones(Phi.shape[0], 1, device=device, dtype=dtype)
+B_fom = np.ones((Phi.shape[0], 1), dtype=dtype)
 B_r = projection.encode(B_fom.T).T  # fixed reduced input operator, (r, m)
 forcing_config = {"forcing_exists": True, "B": B_r, "m": B_fom.shape[1]}
 
@@ -101,67 +90,51 @@ training_data = TrainingData(
 
 printr("=== POD-Galerkin ===")
 beta = 20.0
-A2 = torch.diag(torch.tensor([-1.0, -2.0, -5.0], device=device, dtype=dtype))
-A3 = torch.zeros((3, 3, 3), device=device, dtype=dtype)
-A3[:, :, -1] = torch.diag(torch.tensor([beta, beta, 0.0], device=device, dtype=dtype))
-B = torch.ones((3, 1), device=device, dtype=dtype)
-C = torch.ones((1, 3), device=device, dtype=dtype)
-fom = fom_class.full_order_model(A2, A3, B, C, device=device, dtype=dtype)
+A2 = np.diag(np.array([-1.0, -2.0, -5.0], dtype=dtype))
+A3 = np.zeros((3, 3, 3), dtype=dtype)
+A3[:, :, -1] = np.diag(np.array([beta, beta, 0.0], dtype=dtype))
+B = np.ones((3, 1), dtype=dtype)
+C = np.ones((1, 3), dtype=dtype)
+fom = fom_class.full_order_model(A2, A3, B, C, dtype=dtype)
 
 # Galerkin projection (Psi = Phi): (A_r, H_r), (B_r, C_r).
 (A2r, A3r), (Br, _) = fom.assemble_petrov_galerkin_tensors(Phi, Phi)
 if rank == 0:
-    save_checkpoint(
-        [A2r, A3r, Br], "galerkin", os.path.join(models_dir, "galerkin_model.pt")
-    )
+    save_checkpoint([A2r, A3r, Br], "galerkin", os.path.join(models_dir, "galerkin_model.pkl"))
 
 # %% 1) Train standard operator inference
 
 printr("\n=== OpInf ===")
-opinf_model = PolynomialModel(
-    r, poly_comp, device=device, dtype=dtype, forcing_config=forcing_config
-)
+opinf_model = PolynomialModel(r, poly_comp, dtype=dtype, forcing_config=forcing_config)
 opinf = OpInfModule(training_data, opinf_model, projection, reg=1e-10)
 opinf.set_unlearnable("B")  # B = Phi^T B_fom is fixed, not trained
-printr(f"initial cost: {global_cost(opinf):.6e}")
+printr(f"initial cost: {gcost(opinf):.6e}")
 train(opinf, n_epochs=200, lr=1.0, optimizer_type="lbfgs", print_every=1, tol=1e-14)
-printr(f"final cost:   {global_cost(opinf):.6e}")
+printr(f"final cost:   {gcost(opinf):.6e}")
+opinf._sync_to_rom()
 if rank == 0:
-    opinf._sync_to_rom()
-    save_checkpoint(
-        opinf.rom.get_params(), "opinf", os.path.join(models_dir, "opinf_model.pt")
-    )
+    save_checkpoint(opinf.rom.get_params(), "opinf", os.path.join(models_dir, "opinf_model.pkl"))
 
 # %% 2) Train GAS-constrained OpInf, initialized from the OpInf operators
 
 printr("\n=== GAS-OpInf (initialized from OpInf) ===")
-# Retract the trained OpInf operators (A = A_1, H = A_2) onto the GAS manifold
-# to get [K, R, Q, S].  B is the fixed Phi^T B_fom (set via forcing_config).
-seed = GasPolynomialModel(r, poly_comp, device=device, dtype=dtype)
-seed.retract_general_tensors_to_gas_tensors([opinf.A_1.detach(), opinf.A_2.detach()])
-gas_init = [*seed.get_params(), opinf.B.detach().clone()]
+# Retract the trained OpInf operators (A = A_1, H = A_2) onto the GAS manifold.
+seed = GasPolynomialModel(r, poly_comp, dtype=dtype)
+seed.retract_general_tensors_to_gas_tensors([opinf.A_1, opinf.A_2])
+gas_init = [*seed.get_params(), np.copy(opinf.B)]
 
 gas_model = GasPolynomialModel(
-    r, poly_comp, device=device, dtype=dtype,
-    gas_params=gas_init, forcing_config=forcing_config,
+    r, poly_comp, dtype=dtype, gas_params=gas_init, forcing_config=forcing_config,
 )
 gas = OpInfModule(training_data, gas_model, projection, reg=1e-10)
 gas.set_unlearnable("B")  # B = Phi^T B_fom is fixed, not trained
-printr(f"initial cost: {global_cost(gas):.6e}")
-# GAS-OpInf is non-convex; restart LBFGS to push past line-search stalls.
-train(
-    gas, n_epochs=200, lr=1.0, optimizer_type="lbfgs",
-    print_every=1, tol=1e-14, n_restarts=0,
-)
-printr(f"final cost:   {global_cost(gas):.6e}")
+printr(f"initial cost: {gcost(gas):.6e}")
+train(gas, n_epochs=1000, lr=1.0, optimizer_type="lbfgs", print_every=1, tol=1e-14)
+printr(f"final cost:   {gcost(gas):.6e}")
+gas._sync_to_rom()
+gas_params = [np.asarray(t) for t in gas.rom.get_params()]
 if rank == 0:
-    gas._sync_to_rom()
-    gas_params = [t.detach().cpu().clone() for t in gas.rom.get_params()]
     save_checkpoint(
-        gas.rom.model.get_params(),
-        "gas",
-        os.path.join(models_dir, "gas_opinf_model.pt"),
-        gas_params=gas_params,
+        gas.rom.model.get_params(), "gas",
+        os.path.join(models_dir, "gas_opinf_model.pkl"), gas_params=gas_params,
     )
-
-cleanup_distributed()

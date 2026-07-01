@@ -1,11 +1,11 @@
-import torch
+import numpy as np
 
 
 class full_order_model:
-    def __init__(self, A2, A3, B, C, device="cpu", dtype=torch.float32):
+    def __init__(self, A2, A3, B, C, device="cpu", dtype=np.float64):
 
         self.A2 = A2  # Linear tensor (i.e., a matrix)
-        self.A3 = A3  # Quadratic tesors (i.e., third-order)
+        self.A3 = A3  # Quadratic tensor (i.e., third-order)
         self.B = B  # The input matrix
         self.C = C  # The output matrix
         self.device = device
@@ -15,36 +15,34 @@ class full_order_model:
         """
         Evaluate the FOM dynamics: dx/dt = Ax + H:xx^T + fu(t),
         where A is a second-order tensor, H a third-order tensor and
-        fu is an scipy interpolator for the input
+        fu is a callable for the input.
         """
-
-        f = u.detach() if hasattr(u, "__len__") == True else u(t)
-        if torch.linalg.vector_norm(q) >= 1e4:
+        f = u if hasattr(u, "__len__") else u(t)
+        if np.linalg.norm(q) >= 1e4:
             vec = 0 * q
         else:
-            vec = self.A2 @ q + torch.einsum("ijk,j,k", self.A3, q, q) + f
+            vec = self.A2 @ q + np.einsum("ijk,j,k", self.A3, q, q) + f
 
         return vec
 
     def evaluate_fom_adjoint(self, t, q, fQ):
         """
         Evaluate the adjoint of the FOM dynamics, where fQ is a
-        scipy interpolator for the base flow
+        callable for the base flow.
         """
-
-        if torch.linalg.vector_norm(q) >= 1e4:
+        if np.linalg.norm(q) >= 1e4:
             vec = 0 * q
         else:
             vec = (
                 self.A2
-                + torch.einsum("ijk,j", self.A3, fQ(t))
-                + torch.einsum("ijk,k", self.A3, fQ(t))
+                + np.einsum("ijk,j", self.A3, fQ(t))
+                + np.einsum("ijk,k", self.A3, fQ(t))
             ).T @ q
 
         return vec
 
     def compute_output(self, q):
-        return torch.matmul(self.C, q)
+        return np.matmul(self.C, q)
 
     def compute_output_derivative(self, q):
         return self.C
@@ -52,17 +50,16 @@ class full_order_model:
     def assemble_petrov_galerkin_tensors(self, Phi, Psi):
         """
         Compute the Petrov-Galerkin projection of the tensors
-        A2, A3 and B (which define the FOM dynamics)
+        A2, A3 and B (which define the FOM dynamics).
         """
-
         n, r = Phi.shape
-        PhiF = Phi @ torch.linalg.inv(Psi.T @ Phi)
+        PhiF = Phi @ np.linalg.inv(Psi.T @ Phi)
 
         A2r = Psi.T @ self.A2 @ PhiF
-        A3r = torch.zeros((r, r, r), device=self.device, dtype=self.dtype)
+        A3r = np.zeros((r, r, r), dtype=self.dtype)
         for i in range(r):
             for j in range(r):
-                A3r[:, i, j] = Psi.T @ torch.einsum(
+                A3r[:, i, j] = Psi.T @ np.einsum(
                     "kij,i,j", self.A3, PhiF[:, i], PhiF[:, j]
                 )
 

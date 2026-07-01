@@ -1,23 +1,36 @@
 import abc
-import torch
+from typing import Any
+
+from ..backend import get_backend
 
 
 class Projection(metaclass=abc.ABCMeta):
-    """Abstract base class for projections between full and reduced spaces."""
+    """Abstract base class for projections between full and reduced spaces.
+
+    Binds to the active array backend (NumPy or PyTorch) at construction via
+    :func:`nitrom.backend.get_backend`; all array operations go through
+    :attr:`backend`.
+    """
 
     def __init__(
         self,
         n: int,
         r: int,
         param_names: list[str],
-        device: torch.device | str = "cpu",
-        dtype: torch.dtype = torch.float64,
+        device: str = "cpu",
+        dtype: Any = None,
     ):
+        self._backend = get_backend()
         self._n = n
         self._r = r
-        self._device = torch.device(device)
-        self._dtype = dtype
+        self._device = device
+        self._dtype = dtype if dtype is not None else self._backend.float64
         self._param_names = param_names
+
+    @property
+    def backend(self):
+        """The array backend this projection is bound to."""
+        return self._backend
 
     @property
     def ambient_space_dimension(self) -> int:
@@ -26,31 +39,31 @@ class Projection(metaclass=abc.ABCMeta):
 
     @property
     def latent_space_dimension(self) -> int:
-        """Ambient space dimension."""
+        """Latent space dimension."""
         return self._r
 
     @property
-    def device(self) -> torch.device:
-        """Device on which tensors are allocated."""
+    def device(self) -> str:
+        """Device on which arrays are allocated."""
         return self._device
 
     @property
-    def dtype(self) -> torch.dtype:
-        """Data type of tensors."""
+    def dtype(self) -> Any:
+        """Data type of arrays."""
         return self._dtype
 
     @property
     def param_names(self) -> list[str]:
-        """Names of the model parameters."""
+        """Names of the projection parameters."""
         return self._param_names
 
     @abc.abstractmethod
-    def get_params(self) -> list[torch.Tensor]:
+    def get_params(self) -> list[Any]:
         """
-        Return the current parameter tensors as a list, in the same
+        Return the current parameter arrays as a list, in the same
         order as :attr:`param_names`.
 
-        :rtype: list[torch.Tensor]
+        :rtype: list
         """
         ...
 
@@ -63,59 +76,51 @@ class Projection(metaclass=abc.ABCMeta):
         ...
 
     @abc.abstractmethod
-    def encode(self, q: torch.Tensor) -> torch.Tensor:
+    def encode(self, q: Any) -> Any:
         """
         Project from full space to reduced space.
 
         :param q: full-space vector of shape ``(N,)`` or ``(m, N)``
-        :type q: torch.Tensor
-        :rtype: torch.Tensor
+        :rtype: backend array
         """
         ...
 
     @abc.abstractmethod
-    def decode(self, z: torch.Tensor) -> torch.Tensor:
+    def decode(self, z: Any) -> Any:
         """
         Reconstruct from reduced space to full space.
 
         :param z: reduced-space vector of shape ``(r,)`` or ``(m, r)``
-        :type z: torch.Tensor
-        :rtype: torch.Tensor
+        :rtype: backend array
         """
         ...
 
     @abc.abstractmethod
-    def vjp_encode(self, q: torch.Tensor, v: torch.Tensor, *args, **kwargs) -> tuple:
+    def vjp_encode(self, q: Any, v: Any, *args, **kwargs) -> tuple:
         """
         VJP of the encoder with respect to the projection parameters.
         Subclasses define the specific parameters and return order.
 
         :param q: full-space vector of shape ``(N,)`` or ``(m, N)``
-        :type q: torch.Tensor
         :param v: upstream adjoint seed of shape matching the encoder output
-        :type v: torch.Tensor
-        :rtype: tuple[torch.Tensor, ...]
+        :rtype: tuple
         """
         ...
 
     @abc.abstractmethod
-    def vjp_decode(self, z: torch.Tensor, v: torch.Tensor, *args, **kwargs) -> tuple:
+    def vjp_decode(self, z: Any, v: Any, *args, **kwargs) -> tuple:
         """
         VJP of the decoder with respect to the projection parameters.
         Subclasses define the specific parameters and return order.
 
         :param z: reduced-space vector of shape ``(r,)`` or ``(m, r)``
-        :type z: torch.Tensor
         :param v: upstream adjoint seed of shape matching the decoder output
-        :type v: torch.Tensor
-        :rtype: tuple[torch.Tensor, ...]
+        :rtype: tuple
         """
         ...
 
     @abc.abstractmethod
-    def vjp_decode_state(
-        self, z: torch.Tensor, v: torch.Tensor, *args, **kwargs
-    ) -> torch.Tensor:
+    def vjp_decode_state(self, z: Any, v: Any, *args, **kwargs) -> Any:
         r"""
         VJP of the decoder with respect to the latent **state** :math:`z`
         (not the parameters):
@@ -129,10 +134,8 @@ class Projection(metaclass=abc.ABCMeta):
         latent space (e.g. the measurement source of an adjoint solve).
 
         :param z: reduced-space vector of shape ``(r,)`` or ``(m, r)``
-        :type z: torch.Tensor
         :param v: full-space cotangent of shape ``(N,)`` or ``(m, N)``
-        :type v: torch.Tensor
         :returns: latent-space vector of shape ``(r,)`` or ``(m, r)``
-        :rtype: torch.Tensor
+        :rtype: backend array
         """
         ...

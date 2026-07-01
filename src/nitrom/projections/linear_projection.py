@@ -1,5 +1,6 @@
-import torch
+from typing import Any
 
+from ..backend import get_backend
 from .projection import Projection
 
 
@@ -14,66 +15,63 @@ class LinearProjection(Projection):
         \text{decode}(z) = \Phi (\Psi^\top \Phi)^{-1} z
 
     :param bases: list of two tensors ``[Phi, Psi]``, each of shape ``(N, r)``
-    :type bases: list[torch.Tensor]
+    :type bases: list
     """
 
-    def __init__(self, bases: list[torch.Tensor]):
+    def __init__(self, bases: list):
         Phi = bases[0]
         n, r = Phi.shape
+        bkend = get_backend()
         super().__init__(
             n,
             r,
             param_names=["Phi", "Psi"],
-            device=Phi.device,
+            device=bkend.device_of(Phi),
             dtype=Phi.dtype,
         )
         self.Phi = bases[0]
         self.Psi = bases[1]
-        self.S = torch.linalg.inv(self.Psi.T @ self.Phi)
+        self.S = bkend.inv(self.Psi.T @ self.Phi)
 
-    def get_params(self) -> list[torch.Tensor]:
+    def get_params(self) -> list[Any]:
         """Return ``[Phi, Psi]``."""
         return [self.Phi, self.Psi]
 
-    def update(self, params: list[torch.Tensor]) -> None:
+    def update(self, params: list) -> None:
         r"""
         Update the trial and test bases and recompute :math:`S = (\Psi^\top \Phi)^{-1}`.
 
         :param params: list of two tensors ``[Phi, Psi]``, each of shape ``(N, r)``
-        :type params: list[torch.Tensor]
+        :type params: list
         """
         self.Phi = params[0]
         self.Psi = params[1]
-        self.S = torch.linalg.inv(self.Psi.T @ self.Phi)
+        self.S = self.backend.inv(self.Psi.T @ self.Phi)
 
-    def encode(self, q: torch.Tensor) -> torch.Tensor:
+    def encode(self, q: Any) -> Any:
         r"""
         Project from full space to reduced space: :math:`z = \Psi^\top q`.
 
         :param q: full-space vector of shape ``(N,)`` or ``(m, N)``
-        :type q: torch.Tensor
-        :rtype: torch.Tensor
+        :rtype: backend array
         """
         if q.ndim == 1:
             return self.Psi.T @ q
         return (self.Psi.T @ q.T).T
 
-    def decode(self, z: torch.Tensor) -> torch.Tensor:
+    def decode(self, z: Any) -> Any:
         r"""
         Reconstruct from reduced space to full space:
         :math:`q = \Phi (\Psi^\top \Phi)^{-1} z`.
 
         :param z: reduced-space vector of shape ``(r,)`` or ``(m, r)``
-        :type z: torch.Tensor
-        :rtype: torch.Tensor
+        :rtype: backend array
         """
         if z.ndim == 1:
             return self.Phi @ (self.S @ z)
         return (self.Phi @ (self.S @ z.T)).T
 
-    def vjp_encode(
-        self, q: torch.Tensor, v: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    def vjp_encode(self, q: Any, v: Any) -> tuple:
         r"""
         VJP of the encoder :math:`z = \Psi^\top q` with respect to :math:`\Psi`.
 
@@ -82,23 +80,19 @@ class LinearProjection(Projection):
             \frac{\partial J}{\partial \Psi} = q\, v^\top
 
         :param q: full-space vector of shape ``(N,)`` or ``(m, N)``
-        :type q: torch.Tensor
         :param v: upstream adjoint seed :math:`v = \partial J / \partial z`
             of shape ``(r,)`` or ``(m, r)``
-        :type v: torch.Tensor
         :returns: ``(grad_Phi, grad_Psi)``
-        :rtype: tuple[torch.Tensor, torch.Tensor]
+        :rtype: tuple
         """
         if q.ndim == 1:
-            grad_Psi = torch.outer(q, v)
+            grad_Psi = self.backend.outer(q, v)
         else:
             # q is (m, N), v is (m, r) -> q.T @ v sums over batch -> (N, r)
             grad_Psi = q.T @ v
-        return (torch.zeros_like(grad_Psi), grad_Psi)
+        return (self.backend.zeros_like(grad_Psi), grad_Psi)
 
-    def vjp_decode(
-        self, z: torch.Tensor, v: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    def vjp_decode(self, z: Any, v: Any) -> tuple:
         r"""
         VJP of the decoder :math:`\hat{q} = \Phi\, S\, z` with respect to
         :math:`\Phi` and :math:`\Psi`, where :math:`S = (\Psi^\top \Phi)^{-1}`.
@@ -112,16 +106,14 @@ class LinearProjection(Projection):
                 = -(\Phi\, S\, z)(S^\top \Phi^\top v)^\top
 
         :param z: reduced-space vector of shape ``(r,)`` or ``(m, r)``
-        :type z: torch.Tensor
         :param v: upstream adjoint seed :math:`v = \partial J / \partial \hat{q}`
             of shape ``(N,)`` or ``(m, N)``
-        :type v: torch.Tensor
         :returns: ``(grad_Phi, grad_Psi)``
-        :rtype: tuple[torch.Tensor, torch.Tensor]
+        :rtype: tuple
         """
         if v.ndim == 1:
             # Unbatched: v is (N,), z is (r,)
-            w = torch.outer(v, self.S @ z)  # (N, r)
+            w = self.backend.outer(v, self.S @ z)  # (N, r)
         else:
             # Batched: v is (m, N), z is (m, r) -> v.T @ (z @ S.T) -> (N, r)
             w = v.T @ (z @ self.S.T)  # (N, r)
@@ -133,7 +125,7 @@ class LinearProjection(Projection):
         grad_Psi = -self.Phi @ (wTPhi @ self.S)  # (N, r)
         return (grad_Phi, grad_Psi)
 
-    def vjp_decode_state(self, z: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+    def vjp_decode_state(self, z: Any, v: Any) -> Any:
         r"""
         VJP of the decoder :math:`\hat{q} = \Phi\, S\, z` with respect to the
         latent state :math:`z`.  The decoder is linear in :math:`z`, so the
@@ -146,11 +138,9 @@ class LinearProjection(Projection):
 
         :param z: reduced-space vector of shape ``(r,)`` or ``(m, r)`` (unused;
             the Jacobian does not depend on the state)
-        :type z: torch.Tensor
         :param v: full-space cotangent of shape ``(N,)`` or ``(m, N)``
-        :type v: torch.Tensor
         :returns: latent-space vector of shape ``(r,)`` or ``(m, r)``
-        :rtype: torch.Tensor
+        :rtype: backend array
         """
         if v.ndim == 1:
             return self.S.T @ (self.Phi.T @ v)  # (r,)

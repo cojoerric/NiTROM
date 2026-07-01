@@ -1,28 +1,77 @@
 import abc
+from collections import OrderedDict
+from typing import Any
 
-import torch
-import torch.nn as nn
+from ...backend import get_backend
 
 #: Manifolds a parameter may be optimized on (see
 #: :meth:`InferenceModule.set_manifold_types`).
 MANIFOLD_TYPES = frozenset({"euclidean", "grassmann", "stiefel"})
 
 
-class InferenceModule(nn.Module, abc.ABC):
+class BackendModule:
+    r"""Minimal ``nn.Module``-like parameter container for either backend.
+
+    Provides just the parameter-registration surface NiTROM uses
+    (``register_parameter``, :meth:`parameters`, :meth:`named_parameters`, and
+    ``nn.Parameter`` auto-registration on attribute assignment).  Under the
+    **torch** backend, registered parameters are wrapped in
+    :class:`torch.nn.Parameter`, so ``torch.optim``, autograd, and ``.grad``
+    behave exactly as with a real ``nn.Module``.  Under the **numpy** backend,
+    parameters are stored as plain arrays.
+    """
+
+    def __init__(self) -> None:
+        object.__setattr__(self, "_params", OrderedDict())
+
+    def register_parameter(self, name: str, value: Any) -> None:
+        """Register ``value`` as a trainable parameter named ``name``."""
+        bkend = get_backend()
+        if bkend.is_torch:
+            import torch
+            if not isinstance(value, torch.nn.Parameter):
+                value = torch.nn.Parameter(value)
+        self._params[name] = value
+        object.__setattr__(self, name, value)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        # Mirror nn.Module: assigning a torch.nn.Parameter auto-registers it
+        # (used by lightweight test modules).  Numpy params must be registered
+        # explicitly via register_parameter (plain arrays carry no marker).
+        if get_backend().is_torch:
+            import torch
+            if isinstance(value, torch.nn.Parameter):
+                self.register_parameter(name, value)
+                return
+        object.__setattr__(self, name, value)
+
+    def parameters(self) -> list:
+        """Registered parameters, in registration order."""
+        return list(self._params.values())
+
+    def named_parameters(self) -> list:
+        """``(name, parameter)`` pairs, in registration order."""
+        return list(self._params.items())
+
+    def __call__(self, *args, **kwargs):
+        return self.forward(*args, **kwargs)
+
+
+class InferenceModule(BackendModule, abc.ABC):
     r"""
     Abstract base class for inference modules trained with analytic gradients.
 
-    An inference module is an :class:`torch.nn.Module` that exposes a scalar
-    cost via :meth:`forward` and the *analytic* gradient of that cost via
-    :meth:`gradient`.  Keeping both on the same object lets a single training
-    loop (see :func:`nitrom.optimization.train`) drive any concrete module --
-    operator inference, polynomial-manifold inference, NiTROM, ... -- without
-    relying on autograd.
+    An inference module exposes a scalar cost via :meth:`forward` and the
+    *analytic* gradient of that cost via :meth:`gradient`.  Keeping both on the
+    same object lets a single training loop (see
+    :func:`nitrom.optimization.train`) drive any concrete module -- operator
+    inference, polynomial-manifold inference, NiTROM, ... -- without relying on
+    autograd, on either array backend.
 
     **Invariant.** :meth:`gradient` must return one tensor per trainable
-    parameter, in the *same order* as :meth:`torch.nn.Module.parameters`.
-    The training loop zips the two together to assign ``param.grad``, so the
-    ordering contract must hold for every subclass.
+    parameter, in the *same order* as :meth:`parameters`.  The training loop
+    zips the two together to assign gradients, so the ordering contract must
+    hold for every subclass.
 
     **Learnability.** Every registered parameter is learnable by default.
     Callers may freeze parameters with :meth:`set_unlearnable` (and restore
@@ -60,7 +109,6 @@ class InferenceModule(nn.Module, abc.ABC):
         typical use is to freeze the input operator, ``set_unlearnable("B")``.
 
         :param names: parameter names, each a registered parameter
-        :type names: str
         :raises KeyError: if a name is not a registered parameter
         """
         self._set_learnable(names, False)
@@ -73,7 +121,6 @@ class InferenceModule(nn.Module, abc.ABC):
         parameters again.
 
         :param names: parameter names, each a registered parameter
-        :type names: str
         :raises KeyError: if a name is not a registered parameter
         """
         self._set_learnable(names, True)
@@ -87,9 +134,7 @@ class InferenceModule(nn.Module, abc.ABC):
                 )
             self.is_learnable[name] = value
 
-    def _apply_learnability(
-        self, grads: list[torch.Tensor]
-    ) -> list[torch.Tensor]:
+    def _apply_learnability(self, grads: list) -> list:
         """
         Zero the gradient of any non-learnable parameter, in place.
 
@@ -97,13 +142,12 @@ class InferenceModule(nn.Module, abc.ABC):
         which matches the key order of :attr:`is_learnable`.
 
         :param grads: gradients, one per parameter, in parameter order
-        :type grads: list[torch.Tensor]
         :returns: the same list with non-learnable entries zeroed
-        :rtype: list[torch.Tensor]
         """
+        bkend = get_backend()
         for i, learnable in enumerate(self.is_learnable.values()):
             if not learnable:
-                grads[i] = torch.zeros_like(grads[i])
+                grads[i] = bkend.zeros_like(grads[i])
         return grads
 
     @property
@@ -114,7 +158,7 @@ class InferenceModule(nn.Module, abc.ABC):
         with :meth:`set_manifold_types`.
         """
         if getattr(self, "_manifold_types", None) is None:
-            self._manifold_types = ["euclidean"] * sum(1 for _ in self.parameters())
+            self._manifold_types = ["euclidean"] * len(self.parameters())
         return self._manifold_types
 
     def set_manifold_types(self, names: list[str], types: list[str]) -> None:
@@ -122,10 +166,8 @@ class InferenceModule(nn.Module, abc.ABC):
         Assign the manifold each named parameter is optimized on.
 
         :param names: parameter names
-        :type names: list[str]
         :param types: matching manifold types, each one of ``"euclidean"``,
             ``"grassmann"``, or ``"stiefel"``
-        :type types: list[str]
         :raises ValueError: if ``names`` and ``types`` differ in length, or a
             type is not a recognized manifold
         :raises KeyError: if a name is not a registered parameter
@@ -155,22 +197,20 @@ class InferenceModule(nn.Module, abc.ABC):
         return self.manifold_types
 
     @abc.abstractmethod
-    def forward(self) -> torch.Tensor:
+    def forward(self) -> Any:
         """
         Evaluate the scalar cost.
 
         :returns: scalar loss
-        :rtype: torch.Tensor
         """
         ...
 
     @abc.abstractmethod
-    def gradient(self) -> list[torch.Tensor]:
+    def gradient(self) -> list:
         """
         Compute the analytic gradient of the cost with respect to the
         trainable parameters, in the same order as :meth:`parameters`.
 
-        :returns: list of gradient tensors, one per trainable parameter
-        :rtype: list[torch.Tensor]
+        :returns: list of gradient arrays, one per trainable parameter
         """
         ...

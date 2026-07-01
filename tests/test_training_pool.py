@@ -1,0 +1,109 @@
+"""TrainingPool multiprocessing auto-detection and trajectory sharding.
+
+The pool takes no ``rank``/``world_size``: it figures out the process group
+itself from the active backend's distributed context (``MPI.COMM_WORLD`` under
+``mpiexec``, ``torch.distributed`` under ``torchrun``, else single-process), so
+a parallel job shards correctly with no extra arguments.  An explicit ``comm``
+overrides the auto-detected group.
+"""
+
+import numpy as np
+import pytest
+
+from nitrom import training_data
+from nitrom.backend import set_backend
+from nitrom.training_data import TrainingPool
+
+N_TRAJ, N, NT = 4, 5, 7
+
+
+class _FakeComm:
+    """Stand-in for an mpi4py communicator (Get_rank/Get_size API)."""
+
+    def __init__(self, rank, size):
+        self._rank, self._size = rank, size
+
+    def Get_rank(self):
+        return self._rank
+
+    def Get_size(self):
+        return self._size
+
+
+class _FakeTorchPG:
+    """Stand-in for a torch.distributed process group (rank()/size(), no Get_*)."""
+
+    def __init__(self, rank, size):
+        self._rank, self._size = rank, size
+
+    def rank(self):
+        return self._rank
+
+    def size(self):
+        return self._size
+
+
+@pytest.fixture(autouse=True)
+def _numpy_backend():
+    set_backend("numpy")
+    yield
+    set_backend("torch")
+
+
+@pytest.fixture
+def data_dir(tmp_path):
+    rng = np.random.default_rng(0)
+    for k in range(N_TRAJ):
+        np.save(tmp_path / f"traj_{k:03d}.npy", rng.standard_normal((N, NT)))
+    np.save(tmp_path / "time.npy", np.linspace(0.0, 1.0, NT))
+    return tmp_path
+
+
+def _pool(data_dir, **kw):
+    return TrainingPool(
+        n_traj=N_TRAJ,
+        fname_traj=str(data_dir / "traj_%03d.npy"),
+        fname_time=str(data_dir / "time.npy"),
+        dtype=np.float64,
+        **kw,
+    )
+
+
+def test_single_process_autodetect(data_dir):
+    """No mpiexec: auto-detect yields world_size 1 and loads every trajectory."""
+    pool = _pool(data_dir)
+    assert (pool.rank, pool.world_size) == (0, 1)
+    assert pool.my_n_traj == N_TRAJ
+    assert pool.traj_indices == [0, 1, 2, 3]
+    assert pool.X.shape == (N_TRAJ, N, NT)
+
+
+def test_explicit_comm_overrides_autodetect(data_dir, monkeypatch):
+    """A passed communicator defines the group and wins over auto-detection."""
+    monkeypatch.setattr(training_data, "distributed_rank_size", lambda: (3, 9))
+    comm = _FakeComm(1, 2)
+    pool = _pool(data_dir, comm=comm)
+    assert (pool.rank, pool.world_size) == (1, 2)
+    assert pool.traj_indices == [2, 3]
+    assert pool.comm is comm  # stored for downstream collectives
+
+
+def test_torch_process_group_comm(data_dir):
+    """A comm exposing the torch process-group API (rank()/size(), no Get_rank)
+    is handled too -- not just mpi4py communicators."""
+    pool = _pool(data_dir, comm=_FakeTorchPG(1, 2))
+    assert (pool.rank, pool.world_size) == (1, 2)
+    assert pool.traj_indices == [2, 3]
+
+
+@pytest.mark.parametrize(
+    "rank,size,expected",
+    [(0, 2, [0, 1]), (1, 2, [2, 3]), (0, 4, [0]), (3, 4, [3])],
+)
+def test_autodetected_sharding(data_dir, monkeypatch, rank, size, expected):
+    """A detected multi-rank context shards trajectories without any args."""
+    monkeypatch.setattr(training_data, "distributed_rank_size", lambda: (rank, size))
+    pool = _pool(data_dir)
+    assert (pool.rank, pool.world_size) == (rank, size)
+    assert pool.traj_indices == expected
+    assert pool.my_n_traj == len(expected)

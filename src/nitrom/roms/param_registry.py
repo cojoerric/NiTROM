@@ -1,7 +1,7 @@
 from dataclasses import dataclass
+from typing import Any
 
-import torch
-
+from ..backend import get_backend
 from ..latent_space_models.model import Model
 from ..projections.projection import Projection
 
@@ -132,7 +132,7 @@ class ParamRegistry:
     # ------------------------------------------------------------------
     # Values
     # ------------------------------------------------------------------
-    def value(self, name: str) -> torch.Tensor:
+    def value(self, name: str) -> Any:
         r"""
         Return the current tensor for parameter ``name``.
 
@@ -141,17 +141,17 @@ class ParamRegistry:
 
         :param name: parameter name
         :type name: str
-        :rtype: torch.Tensor
+        :rtype: Any
         """
         entry = self._by_name[name]
         component = "model" if "model" in entry.sources else "projection"
         return self._component_values(component)[name]
 
-    def values(self) -> list[torch.Tensor]:
+    def values(self) -> list[Any]:
         """Current tensors for all registered parameters, in order."""
         return [self.value(name) for name in self.names]
 
-    def _component_values(self, component: str) -> dict[str, torch.Tensor]:
+    def _component_values(self, component: str) -> dict[str, Any]:
         """Map ``name -> tensor`` for the given component."""
         if component == "model":
             return dict(zip(self._model.param_names, self._model.get_params()))
@@ -173,7 +173,7 @@ class ParamRegistry:
         model_vals = self._component_values("model")
         proj_vals = self._component_values("projection")
         for name in self.shared_names:
-            if not torch.allclose(
+            if not get_backend().allclose(
                 model_vals[name], proj_vals[name], atol=atol, rtol=rtol
             ):
                 raise ValueError(
@@ -184,7 +184,7 @@ class ParamRegistry:
     # ------------------------------------------------------------------
     # Enforcing equality of shared parameters
     # ------------------------------------------------------------------
-    def scatter(self, values: list[torch.Tensor]) -> None:
+    def scatter(self, values: list[Any]) -> None:
         r"""
         Write parameter values into both components, routing each value
         through its component's update method.
@@ -197,7 +197,7 @@ class ParamRegistry:
 
         :param values: tensors aligned with :attr:`names` (i.e. one value per
             registered parameter, shared parameters appearing once)
-        :type values: list[torch.Tensor]
+        :type values: list[Any]
         """
         if len(values) != len(self._entries):
             raise ValueError(

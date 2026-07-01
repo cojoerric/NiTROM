@@ -1,10 +1,10 @@
 import os
+import pickle
 
 import fom_class
-import torch
-import torch.distributed as dist
+import numpy as np
 
-from nitrom.backend import cleanup_distributed, setup_distributed
+from nitrom.backend import mpi_allreduce_scalar, mpi_rank_size, set_backend
 from nitrom.latent_space_models.gas_polynomial_model import GasPolynomialModel
 from nitrom.latent_space_models.polynomial_model import PolynomialModel
 from nitrom.optimization import NitromModule, train
@@ -13,11 +13,11 @@ from nitrom.roms.param_registry import ParamRegistry
 from nitrom.training_data import TrainingData, TrainingPool
 from nitrom.utils import compute_POD
 
-# Distributed setup (falls back to a single process when not launched with
-# torchrun).  Run in parallel with, e.g.:
-#     torchrun --standalone --nproc_per_node=2 train_nitrom.py
-device, rank, world_size = setup_distributed()
-dtype = torch.float64
+# Pure-numpy CPU run (lightweight; no torch).  Trajectory-parallel with MPI:
+#     mpiexec -n 4 python train_nitrom.py
+set_backend("numpy")
+dtype = np.float64
+rank, world_size = mpi_rank_size()
 
 traj_path = "./trajectories/"
 models_dir = "./models/"
@@ -25,9 +25,10 @@ n_traj = 4
 r = 2  # reduced dimension
 poly_comp = [1, 2]
 
-# Initialization model flag: choose from "galerkin", "gas_opinf", or "nitrom"
-init_model = "galerkin"
-
+# Initialization model for GAS-NiTROM: "galerkin", "gas_opinf", or "nitrom".
+# "gas_opinf" requires train_opinf.py to have been run first (writes
+# ./models/gas_opinf_model.pkl).
+init_model = "gas_opinf"
 
 if rank == 0:
     os.makedirs(models_dir, exist_ok=True)
@@ -39,32 +40,26 @@ def printr(*args, **kwargs) -> None:
         print(*args, **kwargs)
 
 
-def global_cost(module) -> float:
+def gcost(module) -> float:
     """Cost summed across ranks (``module()`` returns the local partial cost)."""
-    cost = module().detach().clone()
-    if world_size > 1:
-        dist.all_reduce(cost, op=dist.ReduceOp.SUM)
-    return cost.item()
+    c = float(module())
+    return mpi_allreduce_scalar(c) if world_size > 1 else c
 
 
-def save_checkpoint(
-    tensors, kind: str, path: str, Phi, Psi, gas_params=None
-) -> None:
-    """
-    Save a self-contained NiTROM ROM checkpoint: the optimized trial basis Phi,
-    test basis Psi, and the physical operators [A, H, B].
-    """
+def save_checkpoint(tensors, kind, path, Phi, Psi, gas_params=None) -> None:
+    """Save a self-contained NiTROM ROM checkpoint (trial/test bases + operators)."""
     ckpt = {
         "kind": kind,
         "r": r,
         "poly_comp": poly_comp,
         "forcing_config": forcing_config,
-        "Phi": Phi.detach().cpu().clone(),
-        "Psi": Psi.detach().cpu().clone(),
-        "tensors": [t.detach().cpu().clone() for t in tensors],
+        "Phi": np.asarray(Phi),
+        "Psi": np.asarray(Psi),
+        "tensors": [np.asarray(t) for t in tensors],
         "gas_params": gas_params,
     }
-    torch.save(ckpt, path)
+    with open(path, "wb") as f:
+        pickle.dump(ckpt, f)
     print(f"saved -> {path}")
 
 
@@ -75,9 +70,6 @@ pool = TrainingPool(
     fname_traj=traj_path + "traj_%03d.npy",
     fname_time=traj_path + "time.npy",
     dtype=dtype,
-    device=device,
-    rank=rank,
-    world_size=world_size,
     fname_weights=traj_path + "weight_%03d.npy",
     fname_forcing=traj_path + "forcing_%03d.pkl",
     fname_derivs=traj_path + "deriv_%03d.npy",
@@ -91,7 +83,7 @@ Phi = U[:, :r]  # (N, r)
 projection = LinearProjection([Phi, Phi])  # orthogonal (Psi = Phi)
 
 # B = encode(B_fom) (fixed, not learned); the toy FOM is driven by B_fom=ones(N,1).
-B_fom = torch.ones(Phi.shape[0], 1, device=device, dtype=dtype)
+B_fom = np.ones((Phi.shape[0], 1), dtype=dtype)
 B_r = projection.encode(B_fom.T).T  # fixed reduced input operator, (r, m)
 forcing_config = {"forcing_exists": True, "B": B_r, "m": B_fom.shape[1]}
 
@@ -105,124 +97,90 @@ training_data = TrainingData(
 
 # %% Setup the FOM
 beta = 20.0
-A2 = torch.diag(torch.tensor([-1.0, -2.0, -5.0], device=device, dtype=dtype))
-A3 = torch.zeros((3, 3, 3), device=device, dtype=dtype)
-A3[:, :, -1] = torch.diag(
-    torch.tensor([beta, beta, 0.0], device=device, dtype=dtype)
-)
-B_op = torch.ones((3, 1), device=device, dtype=dtype)
-C = torch.ones((1, 3), device=device, dtype=dtype)
-fom = fom_class.full_order_model(A2, A3, B_op, C, device=device, dtype=dtype)
+A2 = np.diag(np.array([-1.0, -2.0, -5.0], dtype=dtype))
+A3 = np.zeros((3, 3, 3), dtype=dtype)
+A3[:, :, -1] = np.diag(np.array([beta, beta, 0.0], dtype=dtype))
+B_op = np.ones((3, 1), dtype=dtype)
+C = np.ones((1, 3), dtype=dtype)
+fom = fom_class.full_order_model(A2, A3, B_op, C, dtype=dtype)
 
 # Galerkin projection (Psi = Phi): (A_r, H_r), (B_r, C_r).
 (A2r, A3r), (Br, _) = fom.assemble_petrov_galerkin_tensors(Phi, Phi)
 if rank == 0:
     save_checkpoint(
-        [A2r, A3r, Br], "galerkin", os.path.join(models_dir, "galerkin_model.pt"), Phi, Phi
+        [A2r, A3r, Br], "galerkin",
+        os.path.join(models_dir, "galerkin_model.pkl"), Phi, Phi,
     )
 
-# %% 1) Train standard NiTROM
+# %% 1) Train standard NiTROM.  Phi lives on the Grassmann manifold, Psi on the
+# Stiefel manifold; train() then uses the Riemannian L-BFGS (retraction +
+# vector transport) for those, and the strong-Wolfe/Armijo step throughout.
 printr("\n=== NiTROM ===")
 nitrom_model = PolynomialModel(
-    r, poly_comp, device=device, dtype=dtype, forcing_config=forcing_config, tensors=(A2r, A3r, Br)
+    r, poly_comp, dtype=dtype, forcing_config=forcing_config, tensors=(A2r, A3r, Br),
 )
 registry = ParamRegistry(nitrom_model, projection)
 nitrom = NitromModule(training_data, registry, fom=fom, n_substeps=10)
 nitrom.set_unlearnable("B")  # B = Phi^T B_fom is fixed, not trained
+nitrom.set_manifold_types(["Phi", "Psi"], ["grassmann", "stiefel"])
 
-printr(f"initial cost: {global_cost(nitrom):.6e}")
-# We call train(). Since model is a NitromModule, Phi and Psi will automatically be treated
-# as Grassmann and Stiefel manifold elements respectively.
-train(
-    nitrom,
-    n_epochs=30,
-    lr=1.0,
-    optimizer_type="lbfgs",
-    print_every=1,
-    tol=1e-14,
-)
-printr(f"final cost:   {global_cost(nitrom):.6e}")
+printr(f"initial cost: {gcost(nitrom):.6e}")
+train(nitrom, n_epochs=30, lr=1.0, optimizer_type="lbfgs", print_every=1, tol=1e-14)
+printr(f"final cost:   {gcost(nitrom):.6e}")
 
+nitrom._sync_to_registry()
 if rank == 0:
-    nitrom._sync_to_registry()
     save_checkpoint(
-        nitrom_model.get_params(),
-        "nitrom",
-        os.path.join(models_dir, "nitrom_model.pt"),
-        nitrom.projection.Phi,
-        nitrom.projection.Psi,
+        nitrom_model.get_params(), "nitrom",
+        os.path.join(models_dir, "nitrom_model.pkl"),
+        nitrom.projection.Phi, nitrom.projection.Psi,
     )
-nitrom_checkpoint = torch.load(os.path.join(models_dir, "nitrom_model.pt"))
-nitrom_model = PolynomialModel(
-    nitrom_checkpoint["r"], nitrom_checkpoint["poly_comp"], device=device, dtype=dtype, forcing_config=forcing_config, tensors=tuple(nitrom_checkpoint["tensors"])
-)
-registry = ParamRegistry(nitrom_model, projection)
-nitrom = NitromModule(training_data, registry, fom=fom, n_substeps=10)
-nitrom.set_unlearnable("B")
 
 # %% 2) Train GAS-NiTROM
 printr(f"\n=== GAS-NiTROM (initialized from {init_model}) ===")
 
+ckpt_name = {
+    "galerkin": "galerkin_model.pkl",
+    "gas_opinf": "gas_opinf_model.pkl",
+    "nitrom": "nitrom_model.pkl",
+}[init_model]
+ckpt_path = os.path.join(models_dir, ckpt_name)
+printr(f"Loading initialization from {ckpt_path}...")
+with open(ckpt_path, "rb") as f:
+    ckpt = pickle.load(f)
+
+init_Phi = np.asarray(ckpt["Phi"], dtype=dtype)
+init_Psi = np.asarray(ckpt.get("Psi", ckpt["Phi"]), dtype=dtype)
+
 if init_model == "gas_opinf":
-    ckpt_path = os.path.join(models_dir, "gas_opinf_model.pt")
-    printr(f"Loading initialization from {ckpt_path}...")
-    ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
-    gas_init = [t.to(device=device, dtype=dtype) for t in ckpt["gas_params"]]
-    init_Phi = ckpt["Phi"].to(device=device, dtype=dtype)
-    init_Psi = ckpt.get("Psi", init_Phi).to(device=device, dtype=dtype)
+    gas_init = [np.asarray(t, dtype=dtype) for t in ckpt["gas_params"]]
 else:
-    ckpt_name = "galerkin_model.pt" if init_model == "galerkin" else "nitrom_model.pt"
-    ckpt_path = os.path.join(models_dir, ckpt_name)
-    printr(f"Loading initialization from {ckpt_path}...")
-    ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
-    tensors = [t.to(device=device, dtype=dtype) for t in ckpt["tensors"]]
-    
-    # Retract the general operator tensors to the GAS manifold
-    seed = GasPolynomialModel(r, poly_comp, device=device, dtype=dtype)
+    tensors = [np.asarray(t, dtype=dtype) for t in ckpt["tensors"]]
+    # Retract the general operator tensors (A, H) onto the GAS manifold.
+    seed = GasPolynomialModel(r, poly_comp, dtype=dtype)
     seed.retract_general_tensors_to_gas_tensors(tensors[:2])
-    gas_init = [*seed.get_params(), tensors[2].clone()]
-    init_Phi = ckpt["Phi"].to(device=device, dtype=dtype)
-    init_Psi = ckpt.get("Psi", init_Phi).to(device=device, dtype=dtype)
+    gas_init = [*seed.get_params(), np.copy(tensors[2])]
 
 gas_nitrom_model = GasPolynomialModel(
-    r,
-    poly_comp,
-    device=device,
-    dtype=dtype,
-    gas_params=gas_init,
-    forcing_config=forcing_config,
+    r, poly_comp, dtype=dtype, gas_params=gas_init, forcing_config=forcing_config,
 )
 
-# Start projection from the loaded bases
+# Start the projection from the loaded bases.
 projection_gas = LinearProjection([init_Phi, init_Psi])
-
 registry_gas = ParamRegistry(gas_nitrom_model, projection_gas)
 gas_nitrom = NitromModule(training_data, registry_gas, fom=fom, n_substeps=15)
 gas_nitrom.set_unlearnable("B")
+gas_nitrom.set_manifold_types(["Phi", "Psi"], ["grassmann", "stiefel"])
 
-printr(f"initial cost: {global_cost(gas_nitrom):.6e}")
-train(
-    gas_nitrom,
-    n_epochs=200,
-    lr=5e-3,
-    optimizer_type="lbfgs",
-    print_every=1,
-    tol=1e-14,
-)
-printr(f"final cost:   {global_cost(gas_nitrom):.6e}")
+printr(f"initial cost: {gcost(gas_nitrom):.6e}")
+train(gas_nitrom, n_epochs=200, lr=5e-3, optimizer_type="lbfgs", print_every=1, tol=1e-14)
+printr(f"final cost:   {gcost(gas_nitrom):.6e}")
 
+gas_nitrom._sync_to_registry()
 if rank == 0:
-    gas_nitrom._sync_to_registry()
-    gas_params = [
-        t.detach().cpu().clone() for t in gas_nitrom_model.get_params()
-    ]
+    gas_params = [np.asarray(t) for t in gas_nitrom_model.get_params()]
     save_checkpoint(
-        gas_nitrom_model.model.get_params(),
-        "gas_nitrom",
-        os.path.join(models_dir, "gas_nitrom_model.pt"),
-        gas_nitrom.projection.Phi,
-        gas_nitrom.projection.Psi,
-        gas_params=gas_params,
+        gas_nitrom_model.model.get_params(), "gas_nitrom",
+        os.path.join(models_dir, "gas_nitrom_model.pkl"),
+        gas_nitrom.projection.Phi, gas_nitrom.projection.Psi, gas_params=gas_params,
     )
-
-cleanup_distributed()

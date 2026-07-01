@@ -1,10 +1,17 @@
 from __future__ import annotations
 
-import dill
 from collections.abc import Callable
+from typing import Any
 
+import dill
 import numpy as np
-import torch
+
+from .backend import (
+    comm_rank_size,
+    distributed_rank_size,
+    get_backend,
+    mpi_comm_world,
+)
 
 
 class TrainingPool:
@@ -12,7 +19,8 @@ class TrainingPool:
 
     Loads trajectory snapshots, optional per-trajectory weights, steady
     forcing fields, and time derivatives from disk, and distributes them
-    across ranks when running in a multi-GPU setting.
+    across ranks when running in a multi-process setting.  Arrays are created
+    with the active backend (NumPy or PyTorch).
 
     Parameters
     ----------
@@ -21,45 +29,22 @@ class TrainingPool:
     fname_traj : str
         Format string for trajectory files (e.g., ``'traj_%03d.npy'``).
     fname_time : str
-        Format string for per-trajectory time files
-        (e.g., ``'time_%03d.npy'``).
-    dtype : torch.dtype, optional
-        Data type for all tensors. Default is ``torch.float32``.
-    device : str | torch.device, optional
-        Device on which tensors are allocated. Default is ``'cpu'``.
-    rank : int, optional
-        Rank of the current process in distributed training. Default is 0.
-    world_size : int, optional
-        Total number of processes. Default is 1 (single-process).
+        Format string for the time file.
+    dtype : optional
+        Data type for all arrays. Defaults to the backend's ``float32``.
+    device : str, optional
+        Device on which arrays are allocated (ignored by NumPy). Default ``'cpu'``.
+    comm : optional
+        Communicator defining the process group over which trajectories are
+        sharded -- either an ``mpi4py`` communicator (e.g. a split of
+        ``COMM_WORLD``) or a ``torch.distributed`` process group; its rank/size
+        are read through whichever API it exposes. If ``None`` (default), the
+        multiprocessing context is auto-detected -- ``MPI.COMM_WORLD`` under
+        ``mpiexec`` (NumPy backend), ``torch.distributed``/``torchrun`` for
+        PyTorch, single-process otherwise -- so a parallel job shards correctly
+        without the caller having to wire up rank/size by hand.
     **kwargs
-        Optional keyword arguments:
-
-        - **fname_weights** (*str*) -- Format string for per-trajectory
-          weight files (e.g., ``'weight_%03d.npy'``).
-        - **fname_forcing** (*str*) -- Format string for forcing
-          callable files (e.g., ``'forcing_%03d.pkl'``).  Each file
-          must contain a pickled callable with signature ``f(t) -> array``.
-        - **fname_derivs** (*str*) -- Format string for time-derivative
-          files (e.g., ``'fname_derivs_%03d.npy'``).
-
-    Attributes
-    ----------
-    X : torch.Tensor
-        Trajectory data with shape ``(my_n_traj, N, n_snapshots)``.
-    times : list[torch.Tensor]
-        Per-trajectory time vectors, each with shape ``(n_snapshots,)``.
-    weights : torch.Tensor
-        Per-trajectory weights with shape ``(my_n_traj,)``.
-    forcing_fns : list[Callable[[torch.Tensor], torch.Tensor]]
-        Per-trajectory forcing callables loaded from pickle files.
-    dX : torch.Tensor
-        Time derivatives with shape ``(my_n_traj, N, n_snapshots)``.
-    N : int
-        Spatial dimension of each trajectory.
-    n_snapshots : int
-        Number of time snapshots per trajectory.
-    my_n_traj : int
-        Number of trajectories assigned to this rank.
+        Optional ``fname_weights``, ``fname_forcing``, ``fname_derivs``.
     """
 
     def __init__(
@@ -67,16 +52,26 @@ class TrainingPool:
         n_traj: int,
         fname_traj: str,
         fname_time: str,
-        dtype: torch.dtype = torch.float32,
-        device: str | torch.device = "cpu",
-        rank: int = 0,
-        world_size: int = 1,
+        dtype: Any = None,
+        device: str = "cpu",
+        comm: Any = None,
         **kwargs: str,
     ) -> None:
-        self.dtype = dtype
+        self.backend = get_backend()
+        self.dtype = dtype if dtype is not None else self.backend.float32
         self.device = device
-        self.rank = rank
-        self.world_size = world_size
+        # Figure out the process group ourselves: an explicit communicator wins;
+        # otherwise auto-detect from the active backend (COMM_WORLD under
+        # mpiexec, torch.distributed under torchrun, else single-process).  The
+        # resolved communicator is stored so collectives (e.g. compute_POD) use
+        # the same group the data was sharded over.
+        if comm is not None:
+            self.comm = comm
+            self.rank, self.world_size = comm_rank_size(comm)
+        else:
+            self.rank, self.world_size = distributed_rank_size()
+            # Keep COMM_WORLD around for numpy collectives (None if MPI absent).
+            self.comm = mpi_comm_world() if self.backend.is_numpy else None
 
         if n_traj <= 0:
             raise ValueError(
@@ -85,12 +80,12 @@ class TrainingPool:
         self.n_traj = n_traj
         self.is_distributed = self.world_size > 1
 
-        # Distribute trajectories across GPUs
+        # Distribute trajectories across ranks
         self.my_n_traj = n_traj // self.world_size
         self.my_n_traj += 1 if self.rank < n_traj % self.world_size else 0
 
         if self.my_n_traj == 0:
-            raise ValueError(f"Every GPU needs to own at least one trajectory")
+            raise ValueError("Every rank needs to own at least one trajectory")
 
         start_idx = self.rank * (n_traj // self.world_size) + min(
             self.rank, n_traj % self.world_size
@@ -102,72 +97,39 @@ class TrainingPool:
         self.load_weights(kwargs)
         self.load_forcing(kwargs)
         self.load_time_derivatives(kwargs)
-        self.time = torch.tensor(np.load(fname_time), device=self.device, dtype=self.dtype)
+        self.time = self.backend.asarray(
+            np.load(fname_time), dtype=self.dtype, device=self.device
+        )
 
     def load_trajectories(self, fname_traj: str) -> None:
-        """Load trajectory snapshots from ``.npy`` files.
-
-        Populates :attr:`X` with shape ``(my_n_traj, N, n_snapshots)`` and
-        sets :attr:`N` and :attr:`n_snapshots`.  Every rank is guaranteed to
-        own at least one trajectory (enforced in ``__init__``).
-
-        Parameters
-        ----------
-        fname_traj : str
-            Format string that accepts a trajectory index
-            (e.g., ``'traj_%03d.npy'``).
-        """
+        """Load trajectory snapshots from ``.npy`` files into :attr:`X`."""
         self.fnames_traj = [fname_traj % k for k in self.traj_indices]
         X = [np.load(f) for f in self.fnames_traj]
-        self.X = torch.tensor(np.stack(X), device=self.device, dtype=self.dtype)
+        self.X = self.backend.asarray(
+            np.stack(X), dtype=self.dtype, device=self.device
+        )
         _, self.N, self.n_snapshots = self.X.shape
 
     def load_weights(self, kwargs: dict[str, str]) -> None:
-        """Load per-trajectory importance weights.
-
-        If ``fname_weights`` is provided in *kwargs*, weights are read from
-        the corresponding ``.npy`` files; otherwise every trajectory receives
-        a weight of 1.
-
-        Parameters
-        ----------
-        kwargs : dict[str, str]
-            Must originate from the constructor keyword arguments.  The
-            recognised key is ``fname_weights``.
-        """
-        fname_weights: str | None = kwargs.get("fname_weights", None)
+        """Load per-trajectory importance weights (default: all ones)."""
+        fname_weights: str | None = kwargs.get("fname_weights")
         if fname_weights is not None:
             self.fnames_weights = [fname_weights % k for k in self.traj_indices]
             weights = [np.load(f) for f in self.fnames_weights]
-            self.weights = torch.tensor(
-                np.stack(weights), device=self.device, dtype=self.dtype
-            ).view(-1)
-        else:
-            self.weights = torch.ones(
-                self.my_n_traj, device=self.device, dtype=self.dtype
+            self.weights = self.backend.asarray(
+                np.stack(weights).reshape(-1), dtype=self.dtype, device=self.device
             )
+        else:
+            self.weights = self.backend.zeros(
+                (self.my_n_traj,), dtype=self.dtype, device=self.device
+            ) + 1.0
 
     def load_forcing(self, kwargs: dict[str, str]) -> None:
-        """Load per-trajectory forcing callables from pickle files.
-
-        Each file must contain a pickled callable with signature
-        ``f(t) -> array_like``.  The callable is validated by calling it
-        with ``self.time``; the result is converted to a :class:`torch.Tensor`
-        on the correct device and dtype if needed.
-
-        If ``fname_forcing`` is not provided, :attr:`forcing_fns` is set to
-        an empty list.
-
-        Parameters
-        ----------
-        kwargs : dict[str, str]
-            Must originate from the constructor keyword arguments.  The
-            recognised key is ``fname_forcing``.
-        """
-        fname_forcing: str | None = kwargs.get("fname_forcing", None)
+        """Load per-trajectory forcing callables from pickle files."""
+        fname_forcing: str | None = kwargs.get("fname_forcing")
         if fname_forcing is not None:
             self.fnames_forcing = [fname_forcing % k for k in self.traj_indices]
-            self.forcing_fns: list[Callable[[torch.Tensor], torch.Tensor]] = []
+            self.forcing_fns: list[Callable] = []
             for f in self.fnames_forcing:
                 with open(f, "rb") as fh:
                     fn = dill.load(fh)
@@ -177,45 +139,30 @@ class TrainingPool:
         else:
             self.forcing_fns = []
 
-    def _wrap_forcing(
-        self, fn: Callable[[torch.Tensor], torch.Tensor]
-    ) -> Callable[[torch.Tensor], torch.Tensor]:
-        """Wrap a forcing callable so it always returns the correct type/device/dtype."""
+    def _wrap_forcing(self, fn: Callable) -> Callable:
+        """Wrap a forcing callable so it returns a backend array of the right dtype."""
 
-        def wrapped(t: torch.Tensor) -> torch.Tensor:
-            result = fn(t)
-            if not isinstance(result, torch.Tensor):
-                result = torch.tensor(result, device=self.device, dtype=self.dtype)
-            if result.device != torch.device(self.device):
-                result = result.to(device=self.device)
-            if result.dtype != self.dtype:
-                result = result.to(dtype=self.dtype)
-            return result
+        def wrapped(t):
+            return self.backend.asarray(
+                fn(t), dtype=self.dtype, device=self.device
+            )
 
         return wrapped
 
     def load_time_derivatives(self, kwargs: dict[str, str]) -> None:
-        """Load precomputed time derivatives of the trajectories.
-
-        If ``fname_derivs`` is provided in *kwargs*, derivatives are read
-        from ``.npy`` files; otherwise :attr:`dX` is filled with zeros.
-
-        Parameters
-        ----------
-        kwargs : dict[str, str]
-            Must originate from the constructor keyword arguments.  The
-            recognised key is ``fname_derivs``.
-        """
-        fname_deriv: str | None = kwargs.get("fname_derivs", None)
+        """Load precomputed time derivatives (default: zeros)."""
+        fname_deriv: str | None = kwargs.get("fname_derivs")
         if fname_deriv is not None:
             self.fnames_deriv = [fname_deriv % k for k in self.traj_indices]
             dX = [np.load(f) for f in self.fnames_deriv]
-            self.dX = torch.tensor(np.stack(dX), device=self.device, dtype=self.dtype)
+            self.dX = self.backend.asarray(
+                np.stack(dX), dtype=self.dtype, device=self.device
+            )
         else:
-            self.dX = torch.zeros(
+            self.dX = self.backend.zeros(
                 (self.my_n_traj, self.N, self.n_snapshots),
-                device=self.device,
                 dtype=self.dtype,
+                device=self.device,
             )
 
 
@@ -230,30 +177,22 @@ class TrainingData:
         **kwargs,
     ):
         """
-        This class contains the training data information that will get passed to the optimizer.
+        Training-data view passed to the optimizer.
 
-        pool:           an instance of the pool class
-        which_trajs:    array of integers to extract a subset of the trajectories contained in
-                        pool.X. Useful if we end up using stochastic gradient descent
-        percent_time_length: float in (0, 1] specifying the fraction of each trajectory's snapshots
-                        to use. E.g., 0.1 keeps the first 10%. Useful for curriculum training where
-                        we start on short trajectories and progressively extend them
-        leggauss_deg:   number of Gauss-Legendre quadrature points used to approximate the integrals
-                        in the gradient (see Prop. 2.1 in NiTROM arXiv paper)
-        nsave_rom:      number of ROM snapshots to store in between two adjacent FOM snapshots
-        Optional keyword arguments:
-            which_fix:              one of fix_bases, fix_tensors or fix_none (default is fix_none)
-            stab_promoting_pen:     value of L2 regularization coefficient
-            stab_promoting_tf:      value of final time for stability promoting penalty
-            stab_promoting_ic:      random (unit-norm) vector to probe the stability penalty
+        pool:                an instance of TrainingPool
+        which_trajs:         integer indices selecting a subset of pool's trajectories
+        percent_time_length: fraction in (0, 1] of each trajectory's snapshots to use
+        leggauss_deg:        number of Gauss-Legendre quadrature points for the gradient
+        nsave_rom:           number of ROM snapshots stored between two FOM snapshots
         """
-
         self.pool = pool
+        self.backend = pool.backend
+        bkend = self.backend
 
         self.global_trajs = which_trajs
         self.local_trajs = self._global_to_local_indices(which_trajs)
 
-        # Compute number of snapshots to keep from percent_time_length
+        # Number of snapshots to keep from percent_time_length
         n_snapshots_total = pool.X.shape[2]
         n_keep = max(1, int(percent_time_length * n_snapshots_total))
         self.time = pool.time[:n_keep]
@@ -263,70 +202,62 @@ class TrainingData:
             self.dX = pool.dX[self.local_trajs, :, :n_keep]
             self.forcing_fns = [pool.forcing_fns[i] for i in self.local_trajs]
             self.weights = pool.weights[self.local_trajs]
-            
         else:
             shape = (0, pool.N, n_keep)
-            self.X = torch.zeros(shape, device=pool.device, dtype=pool.dtype)
-            self.dX = torch.zeros(shape, device=pool.device, dtype=pool.dtype)
+            self.X = bkend.zeros(shape, device=pool.device, dtype=pool.dtype)
+            self.dX = bkend.zeros(shape, device=pool.device, dtype=pool.dtype)
             self.forcing_fns = []
-            self.weights = torch.empty((0,), device=pool.device, dtype=pool.dtype)
-        
+            self.weights = bkend.empty((0,), device=pool.device, dtype=pool.dtype)
+
         self.my_n_traj, _, self.n_snapshots = self.X.shape
         self.nsave_rom = nsave_rom
 
         # Gauss-Legendre quadrature points and weights
-        # Cubic spline interpolation to compute integral
         self.leggauss_deg = leggauss_deg
         tlg, wlg = np.polynomial.legendre.leggauss(self.leggauss_deg)
-        self.tlg = torch.tensor(tlg, device=pool.device, dtype=pool.dtype)
-        self.wlg = torch.tensor(wlg, device=pool.device, dtype=pool.dtype)
+        self.tlg = bkend.asarray(tlg, device=pool.device, dtype=pool.dtype)
+        self.wlg = bkend.asarray(wlg, device=pool.device, dtype=pool.dtype)
 
-        # Scale the weight accordingly so that the cost function measures
-        # the average error over snapshots and trajectories.
-        self.weights *= len(self.global_trajs) * self.n_snapshots
+        # Scale the weights so the cost measures the average error over
+        # snapshots and trajectories.
+        self.weights = self.weights * (len(self.global_trajs) * self.n_snapshots)
 
         # Parse the keyword arguments
         self.which_fix = kwargs.get("which_fix", "fix_none")
         if self.which_fix not in ["fix_tensors", "fix_bases", "fix_none"]:
             raise ValueError("which_fix must be fix_none, fix_tensors or fix_bases")
 
-        self.l2_pen = kwargs.get("stab_promoting_pen", None)
-        self.pen_tf = kwargs.get("stab_promoting_tf", None)
-        self.randic = kwargs.get("stab_promoting_ic", None)
+        self.l2_pen = kwargs.get("stab_promoting_pen")
+        self.pen_tf = kwargs.get("stab_promoting_tf")
+        self.randic = kwargs.get("stab_promoting_ic")
 
-        if self.l2_pen != None and self.pen_tf == None:
+        if self.l2_pen is not None and self.pen_tf is None:
             raise ValueError(
-                "If you provide a value for stab_promoting_pen you \
-                              also have to provide a value for stab_promoting_tf"
+                "If you provide a value for stab_promoting_pen you also have "
+                "to provide a value for stab_promoting_tf"
             )
 
-        if self.l2_pen != None and self.randic == None:
+        if self.l2_pen is not None and self.randic is None:
             raise ValueError(
-                "If you provide a value for stab_promoting_pen you \
-                              also have to provide a random ic vector of the same \
-                              size as the ROM"
+                "If you provide a value for stab_promoting_pen you also have "
+                "to provide a random ic vector of the same size as the ROM"
             )
 
-        if self.randic != None:
-            self.randic /= torch.linalg.vector_norm(self.randic)
+        if self.randic is not None:
+            self.randic = self.randic / bkend.vector_norm(self.randic)
             self.randic = self.randic.reshape(-1)
 
     def _global_to_local_indices(self, global_indices):
+        bkend = self.backend
+        global_indices = bkend.asarray(global_indices)
+        gpu_indices = bkend.asarray(self.pool.traj_indices)
 
-        dev = self.pool.device
-        # Convert global_indices to torch if necessary
-        if not isinstance(global_indices, torch.Tensor):
-            global_indices = torch.tensor(
-                global_indices, device=self.pool.device, dtype=torch.long
-            )
-
-        # Filter to trajectories owned by this pool, then map global IDs to local positions
-        gpu_indices = torch.tensor(self.pool.traj_indices, device=dev)
-        mask = torch.isin(global_indices, gpu_indices)
+        # Filter to trajectories owned by this pool, then map global IDs to
+        # local positions.
+        mask = bkend.isin(global_indices, gpu_indices)
         requested_and_owned = global_indices[mask]
 
-        sorted_gpu, sort_order = gpu_indices.sort()
-        positions = torch.searchsorted(sorted_gpu, requested_and_owned)
-        local_indices = sort_order[positions]
-
-        return local_indices
+        sort_order = bkend.argsort(gpu_indices)
+        sorted_gpu = gpu_indices[sort_order]
+        positions = bkend.searchsorted(sorted_gpu, requested_and_owned)
+        return sort_order[positions]

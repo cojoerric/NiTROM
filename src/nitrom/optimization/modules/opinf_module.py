@@ -1,5 +1,4 @@
-import torch
-import torch.nn as nn
+from typing import Any
 
 from nitrom.latent_space_models.gas_polynomial_model import GasPolynomialModel
 from nitrom.latent_space_models.polynomial_model import PolynomialModel
@@ -52,6 +51,8 @@ class OpInfModule(InferenceModule):
         self.reg = reg
         self.rom = latent_space_model
         self.projection = projection
+        self.backend = latent_space_model.backend
+        bkend = self.backend
 
         # Precompute projected data: Z, dZ of shape (ntraj, r, nt)
         self.Z = self._encode_trajectories(training_data.X)
@@ -62,21 +63,18 @@ class OpInfModule(InferenceModule):
         self.nt = nt
 
         # Weight matrix
-        W = (1 / training_data.weights.view(-1)).repeat_interleave(nt)
-        self.W = torch.diag(W)
+        W = bkend.repeat_interleave(1 / training_data.weights.reshape(-1), nt)
+        self.W = bkend.diag(W)
 
         # Store forcing callables and time grid
         self.forcing_fns = getattr(training_data, "forcing_fns", None)
         self.time = getattr(training_data, "time", None)
 
-        # Register nn.Parameters mirroring the model's params
+        # Register the model's parameters (wrapped per backend by the container)
         for name in self.rom.param_names:
-            self.register_parameter(
-                name,
-                nn.Parameter(getattr(self.rom, name).clone()),
-            )
+            self.register_parameter(name, bkend.copy(getattr(self.rom, name)))
 
-    def _encode_trajectories(self, A: torch.Tensor) -> torch.Tensor:
+    def _encode_trajectories(self, A: Any) -> Any:
         r"""
         Encode a batch of ambient trajectories to the latent space.
 
@@ -85,22 +83,21 @@ class OpInfModule(InferenceModule):
         restored afterwards.
 
         :param A: ambient trajectories of shape ``(ntraj, N, nt)``
-        :type A: torch.Tensor
         :returns: latent trajectories of shape ``(ntraj, r, nt)``
-        :rtype: torch.Tensor
         """
+        bkend = self.backend
         ntraj, N, nt = A.shape
-        A_flat = A.permute(0, 2, 1).reshape(-1, N)  # (ntraj * nt, N)
+        A_flat = bkend.permute(A, (0, 2, 1)).reshape(-1, N)  # (ntraj * nt, N)
         Z_flat = self.projection.encode(A_flat)  # (ntraj * nt, r)
         r = Z_flat.shape[-1]
-        return Z_flat.reshape(ntraj, nt, r).permute(0, 2, 1)  # (ntraj, r, nt)
+        return bkend.permute(Z_flat.reshape(ntraj, nt, r), (0, 2, 1))
 
     def _sync_to_rom(self) -> None:
-        """Push current nn.Parameters into the underlying ROM."""
+        """Push current parameters into the underlying ROM."""
         tensors = [getattr(self, name) for name in self.rom.param_names]
         self.rom.update_params(tensors)
 
-    def _evaluate_rhs_all(self) -> torch.Tensor:
+    def _evaluate_rhs_all(self) -> Any:
         r"""
         Evaluate the ROM RHS at every ``(traj, time)`` pair.
 
@@ -110,17 +107,17 @@ class OpInfModule(InferenceModule):
         ``external_forcing``.
 
         :returns: ``fZ`` of shape ``(ntraj, r, nt)``
-        :rtype: torch.Tensor
         """
+        bkend = self.backend
         r = self.rom.state_dimension
 
         if self.forcing_fns is None or len(self.forcing_fns) == 0:
-            Z_flat = self.Z.permute(0, 2, 1).reshape(-1, r)
+            Z_flat = bkend.permute(self.Z, (0, 2, 1)).reshape(-1, r)
             fZ = self.rom.evaluate_rhs(0.0, Z_flat)
-            return fZ.reshape(self.ntraj, self.nt, r).permute(0, 2, 1)
+            return bkend.permute(fZ.reshape(self.ntraj, self.nt, r), (0, 2, 1))
 
         # Loop over time snapshots to pass per-trajectory forcing
-        fZ = torch.zeros_like(self.dZ)  # (ntraj, r, nt)
+        fZ = bkend.zeros_like(self.dZ)  # (ntraj, r, nt)
         for j in range(self.nt):
             t_j = self.time[j]
             z_j = self.Z[:, :, j]  # (ntraj, r)
@@ -129,35 +126,35 @@ class OpInfModule(InferenceModule):
             )
         return fZ
 
-    def forward(self) -> torch.Tensor:
+    def forward(self) -> Any:
         r"""
         Evaluate the weighted least-squares cost.
 
         :returns: scalar loss
-        :rtype: torch.Tensor
         """
+        bkend = self.backend
         self._sync_to_rom()
 
         fZ = self._evaluate_rhs_all()
 
         R = self.dZ - fZ
-        R_flat = R.permute(1, 0, 2).reshape(self.rom.state_dimension, -1)
+        R_flat = bkend.permute(R, (1, 0, 2)).reshape(self.rom.state_dimension, -1)
         cost = ((R_flat @ self.W) * R_flat).sum()
 
         # Regularization
         for tensor in self.rom.get_params():
-            cost = cost + self.reg * torch.norm(tensor) ** 2
+            cost = cost + self.reg * bkend.vector_norm(tensor) ** 2
 
         return cost
 
-    def gradient(self) -> list[torch.Tensor]:
+    def gradient(self) -> list:
         r"""
         Compute analytic gradients of the cost w.r.t. the trainable
         parameters using the model's VJP.
 
         :returns: list of gradient tensors, one per parameter
-        :rtype: list[torch.Tensor]
         """
+        bkend = self.backend
         self._sync_to_rom()
         r = self.rom.state_dimension
 
@@ -165,13 +162,15 @@ class OpInfModule(InferenceModule):
         fZ = self._evaluate_rhs_all()
 
         R = self.dZ - fZ
-        R_flat = R.permute(1, 0, 2).reshape(r, -1)
-        RW = (R_flat @ self.W).reshape(r, self.ntraj, self.nt).permute(1, 0, 2)
+        R_flat = bkend.permute(R, (1, 0, 2)).reshape(r, -1)
+        RW = bkend.permute(
+            (R_flat @ self.W).reshape(r, self.ntraj, self.nt), (1, 0, 2)
+        )
 
         # VJP: adjoint seed v = -2 * R * W
         if self.forcing_fns is None or len(self.forcing_fns) == 0:
-            Z_flat = self.Z.permute(0, 2, 1).reshape(-1, r)
-            v = -2.0 * RW.permute(0, 2, 1).reshape(-1, r)
+            Z_flat = bkend.permute(self.Z, (0, 2, 1)).reshape(-1, r)
+            v = -2.0 * bkend.permute(RW, (0, 2, 1)).reshape(-1, r)
             grads = self.rom.vjp_evaluate_rhs(Z_flat, v)
         else:
             # Accumulate VJP over time snapshots

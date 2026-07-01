@@ -1,4 +1,4 @@
-import torch
+from typing import Any
 
 from .model import Model
 from .polynomial_model import PolynomialModel
@@ -27,16 +27,16 @@ class GasPolynomialModel(Model):
     :type r: int
     :param poly_comp: polynomial degrees, e.g. ``[1, 2]``
     :type poly_comp: list[int]
-    :param device: device for tensor allocation
-    :type device: torch.device or str
-    :param dtype: data type for tensors
-    :type dtype: torch.dtype
+    :param device: device for array allocation (ignored by the NumPy backend)
+    :type device: str
+    :param dtype: data type for arrays; defaults to the backend's ``float64``
+    :type dtype: backend dtype or None
     :param instability_threshold: norm threshold for blow-up guard
     :type instability_threshold: float
     :param gas_params: optional list of initial GAS parameter tensors
         (subset depending on ``poly_comp``).
         If ``None``, parameters are initialized randomly.
-    :type gas_params: list[torch.Tensor] or None
+    :type gas_params: list or None
     :param forcing_config: optional dict with keys ``"forcing_exists"``
         (bool) and ``"m"`` (int).  See :class:`PolynomialModel`.
     :type forcing_config: dict or None
@@ -46,10 +46,10 @@ class GasPolynomialModel(Model):
         self,
         r: int,
         poly_comp: list[int],
-        device: torch.device | str = "cpu",
-        dtype: torch.dtype = torch.float64,
+        device: str = "cpu",
+        dtype: Any = None,
         instability_threshold: float = 1e6,
-        gas_params: list[torch.Tensor] | None = None,
+        gas_params: list | None = None,
         forcing_config: dict | None = None,
     ):
         # Determine GAS parameter names and shapes
@@ -73,32 +73,37 @@ class GasPolynomialModel(Model):
             param_names.append("B")
 
         super().__init__(r, param_names, device, dtype)
+        bkend = self.backend
         self.poly_comp = poly_comp
         self.forcing_exists = forcing_exists
 
         # Set GAS parameters as attributes
         if gas_params is not None:
-            for name, tensor in zip(param_names, gas_params):
-                setattr(self, name, tensor.to(device=self.device, dtype=self.dtype))
+            for name, tensor in zip(param_names, gas_params, strict=True):
+                setattr(
+                    self, name,
+                    bkend.asarray(tensor, dtype=self.dtype, device=self.device),
+                )
         else:
             # Initialize the GAS parameters randomly (K, R, Q, S; B handled below)
             gas_param_names = [name for name in param_names if name != "B"]
             for name, shape in zip(gas_param_names, gas_shapes, strict=True):
                 setattr(
-                    self, name, torch.randn(shape, device=self.device, dtype=self.dtype)
+                    self, name,
+                    bkend.randn(shape, dtype=self.dtype, device=self.device),
                 )
             # Initialize B (fixed value if supplied, else zeros)
             if forcing_exists:
                 m = forcing_config["m"]
                 self.B = (
-                    B_fixed.to(device=self.device, dtype=self.dtype)
+                    bkend.asarray(B_fixed, dtype=self.dtype, device=self.device)
                     if B_fixed is not None
-                    else torch.zeros((r, m), device=self.device, dtype=self.dtype)
+                    else bkend.zeros((r, m), dtype=self.dtype, device=self.device)
                 )
 
         # A supplied fixed B always overrides any value from gas_params.
         if forcing_exists and B_fixed is not None:
-            self.B = B_fixed.to(device=self.device, dtype=self.dtype)
+            self.B = bkend.asarray(B_fixed, dtype=self.dtype, device=self.device)
 
         # Assemble physical tensors and create the inner PolynomialModel
         tensors = self.assemble_gas_tensors()
@@ -106,47 +111,48 @@ class GasPolynomialModel(Model):
             r,
             poly_comp,
             device=device,
-            dtype=dtype,
+            dtype=self.dtype,
             instability_threshold=instability_threshold,
             tensors=tensors,
             forcing_config=forcing_config,
         )
 
-    def get_params(self) -> list[torch.Tensor]:
+    def get_params(self) -> list[Any]:
         """Return the current GAS parameter tensors as a list."""
         return [getattr(self, name) for name in self.param_names]
 
-    def assemble_gas_tensors(self) -> list[torch.Tensor]:
+    def assemble_gas_tensors(self) -> list[Any]:
         r"""
         Build physical operator tensors from the current GAS parameters.
 
         :returns: list of tensors ``[A, H, ..., B]`` matching the inner
             :class:`PolynomialModel` param order.  ``B`` is appended
             only when forcing is present.
-        :rtype: list[torch.Tensor]
+        :rtype: list
         """
+        bkend = self.backend
         tensors = [None] * len(self.poly_comp)
 
-        Qinv = torch.linalg.inv(self.Q)
+        Qinv = bkend.inv(self.Q)
         Qtil = Qinv @ Qinv.T
 
         if 1 in self.poly_comp:
             idx = self.poly_comp.index(1)
-            Rinv = torch.linalg.inv(self.R)
+            Rinv = bkend.inv(self.R)
             tensors[idx] = ((self.K - self.K.T) - Rinv @ Rinv.T) @ Qtil
 
         if 2 in self.poly_comp:
             idx = self.poly_comp.index(2)
-            tensors[idx] = torch.einsum("ilk,lj->ijk", self.S, Qtil) - torch.einsum(
-                "lik,lj->ijk", self.S, Qtil
-            )
+            tensors[idx] = bkend.einsum(
+                "ilk,lj->ijk", self.S, Qtil
+            ) - bkend.einsum("lik,lj->ijk", self.S, Qtil)
 
         if self.forcing_exists:
             tensors.append(self.B)
 
         return tensors
 
-    def update_params(self, params: list[torch.Tensor]) -> None:
+    def update_params(self, params: list) -> None:
         r"""
         Update the GAS parameters (and B if present), reassemble
         physical tensors, and push them into the inner
@@ -154,15 +160,15 @@ class GasPolynomialModel(Model):
 
         :param params: parameter tensors matching :attr:`param_names`
             (e.g. ``[K, R, Q, S]`` or ``[K, R, Q, S, B]``)
-        :type params: list[torch.Tensor]
+        :type params: list
         """
-        for name, tensor in zip(self.param_names, params):
+        for name, tensor in zip(self.param_names, params, strict=True):
             setattr(self, name, tensor)
         self.model.update_params(self.assemble_gas_tensors())
 
     def retract_general_tensors_to_gas_tensors(
         self,
-        tensors: list[torch.Tensor],
+        tensors: list,
         margin: float = 1e-3,
     ) -> None:
         r"""
@@ -222,7 +228,7 @@ class GasPolynomialModel(Model):
 
         :param tensors: ``[A, H]`` with ``A`` of shape ``(r, r)`` and ``H``
             of shape ``(r, r, r)``
-        :type tensors: list[torch.Tensor]
+        :type tensors: list
         :param margin: stability margin by which the spectrum is pushed into
             the left-half plane when ``A`` is not already strictly stable
         :type margin: float
@@ -232,24 +238,25 @@ class GasPolynomialModel(Model):
         """
         from scipy.linalg import solve_continuous_lyapunov
 
-        A = tensors[0].to(device=self.device, dtype=self.dtype)
-        H = tensors[1].to(device=self.device, dtype=self.dtype)
+        bkend = self.backend
+        A = bkend.asarray(tensors[0], dtype=self.dtype, device=self.device)
+        H = bkend.asarray(tensors[1], dtype=self.dtype, device=self.device)
         r = A.shape[0]
-        eye = torch.eye(r, device=self.device, dtype=self.dtype)
+        eye = bkend.eye(r, dtype=self.dtype, device=self.device)
 
         # Shift the spectrum into the open left-half plane if A is not already
         # strictly stable (leave it unchanged otherwise).
-        abscissa = float(torch.linalg.eigvals(A).real.max())
+        abscissa = float(bkend.eigvals(A).real.max())
         shift = abscissa + margin if abscissa >= 0.0 else 0.0
         A = A - shift * eye
 
         # Solve A^T P + P A = -I for the SPD Lyapunov solution P.
         P_np = solve_continuous_lyapunov(
-            A.T.detach().cpu().numpy(), (-eye).detach().cpu().numpy()
+            bkend.to_numpy(A.T), bkend.to_numpy(-eye)
         )
-        P = torch.as_tensor(P_np, device=self.device, dtype=self.dtype)
+        P = bkend.asarray(P_np, dtype=self.dtype, device=self.device)
         P = 0.5 * (P + P.T)  # symmetrize against round-off
-        Pinv = torch.linalg.inv(P)
+        Pinv = bkend.inv(P)
 
         # Split A P^{-1} = N - M with N skew and M = -sym(A P^{-1}) = P^{-2}/2 SPD.
         APinv = A @ Pinv
@@ -258,18 +265,18 @@ class GasPolynomialModel(Model):
 
         # K = N / 2 (so K - K^T = N);  R^{-1}R^{-T} = M;  Q^{-1}Q^{-T} = P.
         K = 0.5 * N
-        R = torch.linalg.inv(torch.linalg.cholesky(M))
-        Q = torch.linalg.cholesky(Pinv).T
+        R = bkend.inv(bkend.cholesky(M))
+        Q = bkend.cholesky(Pinv).T
 
         # S_{:,:,k} = skew(H_{:,:,k} P^{-1}): transpose the leading (i, j) axes.
-        H_Pinv = torch.einsum("ijk,jl->ilk", H, Pinv)
-        S = 0.25 * (H_Pinv - H_Pinv.permute(1, 0, 2))
+        H_Pinv = bkend.einsum("ijk,jl->ilk", H, Pinv)
+        S = 0.25 * (H_Pinv - bkend.permute(H_Pinv, (1, 0, 2)))
 
         # Verify the reconstruction A = ((K - K^T) - R^{-1}R^{-T}) Q^{-1}Q^{-T}.
-        Qinv = torch.linalg.inv(Q)
-        Rinv = torch.linalg.inv(R)
+        Qinv = bkend.inv(Q)
+        Rinv = bkend.inv(R)
         A_recon = ((K - K.T) - Rinv @ Rinv.T) @ (Qinv @ Qinv.T)
-        err = torch.linalg.norm(A_recon - A) / torch.linalg.norm(A)
+        err = float(bkend.vector_norm(A_recon - A) / bkend.vector_norm(A))
         if err > 1e-6:
             raise RuntimeError(
                 f"GAS retraction failed to reconstruct A (rel. error {err:.2e})."
@@ -278,18 +285,24 @@ class GasPolynomialModel(Model):
         # Verify the reconstruction of H if the input was already structured.
         if 2 in self.poly_comp:
             Qtil = Qinv @ Qinv.T
-            H_recon = torch.einsum("ilk,lj->ijk", S, Qtil) - torch.einsum(
+            H_recon = bkend.einsum("ilk,lj->ijk", S, Qtil) - bkend.einsum(
                 "lik,lj->ijk", S, Qtil
             )
-            # Check if the input H was already structured (skew-symmetric under the P metric)
-            is_structured = torch.linalg.norm(H_Pinv + H_Pinv.permute(1, 0, 2)) / (
-                torch.linalg.norm(H_Pinv) + 1e-12
+            # Check if the input H was already structured (skew-symmetric under
+            # the P metric).
+            is_structured = float(
+                bkend.vector_norm(H_Pinv + bkend.permute(H_Pinv, (1, 0, 2)))
+                / (bkend.vector_norm(H_Pinv) + 1e-12)
             ) < 1e-6
             if is_structured:
-                err_H = torch.linalg.norm(H_recon - H) / (torch.linalg.norm(H) + 1e-12)
+                err_H = float(
+                    bkend.vector_norm(H_recon - H)
+                    / (bkend.vector_norm(H) + 1e-12)
+                )
                 if err_H > 1e-6:
                     raise RuntimeError(
-                        f"GAS retraction failed to reconstruct H (rel. error {err_H:.2e})."
+                        f"GAS retraction failed to reconstruct H "
+                        f"(rel. error {err_H:.2e})."
                     )
 
         # Set the GAS parameters (preserving B and any other current params).
@@ -299,19 +312,15 @@ class GasPolynomialModel(Model):
         ]
         self.update_params(params)
 
-    def evaluate_rhs(self, t: float, z: torch.Tensor, **kwargs) -> torch.Tensor:
+    def evaluate_rhs(self, t: float, z: Any, **kwargs) -> Any:
         """Delegate to the inner :class:`PolynomialModel`."""
         return self.model.evaluate_rhs(t, z, **kwargs)
 
-    def evaluate_adjoint_rhs(
-        self, t: float, z: torch.Tensor, Z: torch.Tensor, **kwargs
-    ) -> torch.Tensor:
+    def evaluate_adjoint_rhs(self, t: float, z: Any, Z: Any, **kwargs) -> Any:
         """Delegate to the inner :class:`PolynomialModel`."""
         return self.model.evaluate_adjoint_rhs(t, z, Z, **kwargs)
 
-    def vjp_evaluate_rhs(
-        self, z: torch.Tensor, v: torch.Tensor, **kwargs
-    ) -> list[torch.Tensor]:
+    def vjp_evaluate_rhs(self, z: Any, v: Any, **kwargs) -> list[Any]:
         r"""
         VJP of the RHS with respect to the GAS parameters.
 
@@ -320,12 +329,11 @@ class GasPolynomialModel(Model):
         to obtain gradients w.r.t. ``(K, R, Q, S, [B])``.
 
         :param z: state vector of shape ``(n,)`` or ``(m, n)``
-        :type z: torch.Tensor
         :param v: upstream adjoint seed, same shape as ``z``
-        :type v: torch.Tensor
         :returns: list of gradients matching :attr:`param_names`
-        :rtype: list[torch.Tensor]
+        :rtype: list
         """
+        bkend = self.backend
         inner_grads = self.model.vjp_evaluate_rhs(z, v, **kwargs)
 
         # Unpack inner gradients (indexed by position in poly_comp)
@@ -333,13 +341,13 @@ class GasPolynomialModel(Model):
         grad_H = inner_grads[self.poly_comp.index(2)] if 2 in self.poly_comp else None
         grad_B = inner_grads[-1] if self.forcing_exists else None
 
-        Qinv = torch.linalg.inv(self.Q)
+        Qinv = bkend.inv(self.Q)
         Qtil = Qinv @ Qinv.T
 
         grads = []
 
         # grad_K, grad_R (from linear term A = ((K - K^T) - R^{-1} R^{-T}) @ Qtil)
-        Rinv = torch.linalg.inv(self.R) if 1 in self.poly_comp else None
+        Rinv = bkend.inv(self.R) if 1 in self.poly_comp else None
         if 1 in self.poly_comp:
             grad_A_Qtil = grad_A @ Qtil
             sym = grad_A_Qtil + grad_A_Qtil.T
@@ -355,19 +363,17 @@ class GasPolynomialModel(Model):
                 A_pre = (self.K - self.K.T) - Rinv @ Rinv.T
                 grad_Qtil = A_pre.T @ grad_A
             else:
-                grad_Qtil = torch.zeros_like(Qtil)
+                grad_Qtil = bkend.zeros_like(Qtil)
             # grad_Qtil_{lj} from quadratic: Σ_{ik} grad_H_{ijk} (S_{ilk} - S_{lik})
-            grad_Qtil += (
-                torch.einsum("jik,jlk->il", self.S, grad_H)
-                - torch.einsum("ijk,jlk->il", self.S, grad_H)
-            )
+            grad_Qtil += bkend.einsum(
+                "jik,jlk->il", self.S, grad_H
+            ) - bkend.einsum("ijk,jlk->il", self.S, grad_H)
             # grad_Q from Qtil = Q^{-1} Q^{-T}
             grad_Q = -(Qinv.T @ grad_Qtil @ Qtil + Qinv.T @ grad_Qtil.T @ Qtil)
 
             # grad_S_{abc} = Σ_j grad_H_{ajc} Qtil_{bj} - Σ_j grad_H_{bjc} Qtil_{aj}
-            grad_S = (
-                torch.einsum("ijk,jl->ilk", grad_H, Qtil)
-                - torch.einsum("jl,ilk->jik", Qtil, grad_H)
+            grad_S = bkend.einsum("ijk,jl->ilk", grad_H, Qtil) - bkend.einsum(
+                "jl,ilk->jik", Qtil, grad_H
             )
             grads.extend([grad_Q, grad_S])
 
