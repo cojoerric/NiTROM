@@ -3,8 +3,6 @@ from typing import Any
 from .model import Model
 from .polynomial_model import PolynomialModel
 
-import numpy as np
-
 
 class GasPolynomialModel(Model):
     r"""
@@ -270,7 +268,6 @@ class GasPolynomialModel(Model):
         else:
             P = eye
 
-        print(np.linalg.cond(P))
         P = 0.5 * (P + P.T)  # symmetrize against round-off
         Pinv = bkend.inv(P)
 
