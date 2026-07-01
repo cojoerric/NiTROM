@@ -200,7 +200,7 @@ class TrainingData:
         if len(self.local_trajs) > 0:
             self.X = pool.X[self.local_trajs, :, :n_keep]
             self.dX = pool.dX[self.local_trajs, :, :n_keep]
-            self.forcing_fns = [pool.forcing_fns[i] for i in self.local_trajs]
+            self.forcing_fns = [pool.forcing_fns[i] for i in self.local_trajs] if pool.forcing_fns else []
             self.weights = pool.weights[self.local_trajs]
         else:
             shape = (0, pool.N, n_keep)
