@@ -121,6 +121,8 @@ printr("-" * 75)
 printr(f"{'Regularization':<20} | {'OpInf NiTROM Cost':<22} | {'GAS-OpInf NiTROM Cost':<22}")
 printr("-" * 75)
 
+gas_init = None
+
 for reg in regs:
     # 1) Solve standard OpInf analytically
     opinf_model = PolynomialModel(r, poly_comp, dtype=dtype)
@@ -137,10 +139,11 @@ for reg in regs:
         best_opinf_reg = reg
         best_opinf_tensors = [np.copy(np.asarray(t)) for t in opinf_model.get_params()]
 
-    # 2) Train GAS-constrained OpInf, initialized from Galerkin
-    seed = GasPolynomialModel(r, poly_comp, dtype=dtype)
-    seed.retract_general_tensors_to_gas_tensors([A2r, A3r], lyapunov_P=False)
-    gas_init = [*seed.get_params()]
+    # 2) Train GAS-constrained OpInf, initialized from the previous solution (warm-start) or Galerkin
+    if gas_init is None:
+        seed = GasPolynomialModel(r, poly_comp, dtype=dtype)
+        seed.retract_general_tensors_to_gas_tensors([A2r, A3r], lyapunov_P=False)
+        gas_init = [*seed.get_params()]
 
     gas_model = GasPolynomialModel(
         r, poly_comp, dtype=dtype, gas_params=gas_init,
@@ -149,6 +152,9 @@ for reg in regs:
 
     # Train GAS-OpInf silently
     train(gas, n_epochs=1000, lr=1.0, optimizer_type="lbfgs", print_every=1, tol=1e-10)
+
+    # Save the current optimized parameters for the next iteration (warm-start)
+    gas_init = [np.copy(np.asarray(t)) for t in gas_model.get_params()]
 
     # Evaluate GAS-OpInf NiTROM-based cost
     gas_registry = ParamRegistry(gas_model, projection)
