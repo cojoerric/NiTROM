@@ -125,7 +125,7 @@ nitrom.set_unlearnable("B")  # B = Phi^T B_fom is fixed, not trained
 nitrom.set_manifold_types(["Phi", "Psi"], ["grassmann", "stiefel"])
 
 printr(f"initial cost: {gcost(nitrom):.6e}")
-train(nitrom, n_epochs=30, lr=1.0, optimizer_type="lbfgs", print_every=1, tol=1e-14)
+train(nitrom, n_epochs=200, lr=1.0, optimizer_type="lbfgs", print_every=1, tol=1e-14)
 printr(f"final cost:   {gcost(nitrom):.6e}")
 
 nitrom._sync_to_registry()
@@ -135,6 +135,16 @@ if rank == 0:
         os.path.join(models_dir, "nitrom_model.pkl"),
         nitrom.projection.Phi, nitrom.projection.Psi,
     )
+
+nitrom_loss = nitrom.loss_history
+nitrom_gradnorm = nitrom.gradnorm_history
+nitrom_iters = np.arange(len(nitrom_loss))
+nitrom_dict = {"iters": nitrom_iters,
+                "loss": nitrom_loss,
+                "gradnorm": nitrom_gradnorm}
+if rank == 0:
+    with open(os.path.join(models_dir, "nitrom_history.pkl"), "wb") as f:
+        pickle.dump(nitrom_dict, f) 
 
 # %% 2) Train GAS-NiTROM
 printr(f"\n=== GAS-NiTROM (initialized from {init_model}) ===")
@@ -184,3 +194,13 @@ if rank == 0:
         os.path.join(models_dir, "gas_nitrom_model.pkl"),
         gas_nitrom.projection.Phi, gas_nitrom.projection.Psi, gas_params=gas_params,
     )
+
+gas_nitrom_loss = gas_nitrom.loss_history
+gas_nitrom_gradnorm = gas_nitrom.gradnorm_history
+gas_nitrom_iters = np.arange(len(gas_nitrom_loss))
+gas_nitrom_dict = {"iters": gas_nitrom_iters,
+                "loss": gas_nitrom_loss,
+                "gradnorm": gas_nitrom_gradnorm}
+if rank == 0:
+    with open(os.path.join(models_dir, "gas_nitrom_history.pkl"), "wb") as f:
+        pickle.dump(gas_nitrom_dict, f)

@@ -48,9 +48,15 @@ PAPER_RCPARAMS = {
 
 #: Qualitative colors used for the ROM families across figures.
 COLORS = {
-    "galerkin": "#66c2a5",
-    "opinf": "#fc8d62",
-    "gas": "#8da0cb",
+    "galerkin": "#1b9e77",
+    "opinf": "#d95f02",
+    "nitrom": "#386cb0",
+}
+
+STYLES = {
+    "galerkin": (0, (1.0, 1.2)),
+    "notgas": (0, (5.0, 2.4)),
+    "gas": "solid"
 }
 
 

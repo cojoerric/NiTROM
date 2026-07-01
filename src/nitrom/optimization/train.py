@@ -139,7 +139,12 @@ def _train_numpy(
             return AdamDirection(lr)
         return SGDDirection(lr)
 
+    current_loss_history = []
+    current_gradnorm_history = []
+
     def progress(it, f, gnorm):
+        current_loss_history.append(f)
+        current_gradnorm_history.append(gnorm)
         if printable and it % print_every == 0:
             print(f"iter {it:6d} | Loss: {f:.6e} | GradNorm: {gnorm:.6e}")
 
@@ -149,7 +154,10 @@ def _train_numpy(
     scale = 0.05 * (float(np.mean([np.abs(a).mean() for a in x0])) + 1e-8)
     rng = np.random.default_rng(0)
     best_xs, best_f = x0, float("inf")
+    best_loss_history, best_gradnorm_history = [], []
     for attempt in range(n_restarts + 1):
+        current_loss_history.clear()
+        current_gradnorm_history.clear()
         xs0 = (
             [a.copy() for a in x0]
             if attempt == 0
@@ -162,6 +170,8 @@ def _train_numpy(
         )
         if fk < best_f:
             best_xs, best_f = xk, fk
+            best_loss_history = list(current_loss_history)
+            best_gradnorm_history = list(current_gradnorm_history)
         if printable:
             tag = "run" if attempt == 0 else f"multistart {attempt}/{n_restarts}"
             print(
@@ -170,6 +180,8 @@ def _train_numpy(
             )
     for name, arr in zip(names, best_xs, strict=True):
         set_p(name, arr)
+    model.loss_history = best_loss_history
+    model.gradnorm_history = best_gradnorm_history
     return model
 
 
@@ -259,6 +271,9 @@ def _train_torch(
     loss_at_last_restart = float("inf")
     restarts_left = n_restarts
 
+    model.loss_history = []
+    model.gradnorm_history = []
+
     for epoch in range(n_epochs):
         if optimizer_type == "lbfgs":
             loss = optimizer.step(_compute_and_assign_grads)
@@ -286,6 +301,9 @@ def _train_torch(
         grad_norm = torch.sqrt(
             sum((p.grad**2).sum() for p in model.parameters() if p.grad is not None)
         ).item()
+
+        model.loss_history.append(loss_val)
+        model.gradnorm_history.append(grad_norm)
         if rank == 0 and (epoch % print_every == 0 or epoch == n_epochs - 1):
             lr_str = (
                 f" | LR: {optimizer.param_groups[0]['lr']:.2e}"

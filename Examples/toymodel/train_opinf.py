@@ -106,7 +106,7 @@ if rank == 0:
 
 printr("\n=== OpInf ===")
 opinf_model = PolynomialModel(r, poly_comp, dtype=dtype, forcing_config=forcing_config)
-opinf = OpInfModule(training_data, opinf_model, projection, reg=1e-10)
+opinf = OpInfModule(training_data, opinf_model, projection, reg=3.27549e-7)
 opinf.set_unlearnable("B")  # B = Phi^T B_fom is fixed, not trained
 printr(f"initial cost: {gcost(opinf):.6e}")
 train(opinf, n_epochs=200, lr=1.0, optimizer_type="lbfgs", print_every=1, tol=1e-14)
@@ -126,7 +126,7 @@ gas_init = [*seed.get_params(), np.copy(opinf.B)]
 gas_model = GasPolynomialModel(
     r, poly_comp, dtype=dtype, gas_params=gas_init, forcing_config=forcing_config,
 )
-gas = OpInfModule(training_data, gas_model, projection, reg=1e-10)
+gas = OpInfModule(training_data, gas_model, projection, reg=1e-6)
 gas.set_unlearnable("B")  # B = Phi^T B_fom is fixed, not trained
 printr(f"initial cost: {gcost(gas):.6e}")
 train(gas, n_epochs=1000, lr=1.0, optimizer_type="lbfgs", print_every=1, tol=1e-14)
@@ -138,3 +138,12 @@ if rank == 0:
         gas.rom.model.get_params(), "gas",
         os.path.join(models_dir, "gas_opinf_model.pkl"), gas_params=gas_params,
     )
+gas_opinf_loss = gas.loss_history
+gas_opinf_gradnorm = gas.gradnorm_history
+gas_opinf_iters = np.arange(len(gas_opinf_loss))
+gas_opinf_dict = { "iters": gas_opinf_iters,
+                    "loss": gas_opinf_loss,
+                    "gradnorm": gas_opinf_gradnorm }
+if rank == 0:
+    with open(os.path.join(models_dir, "gas_opinf_history.pkl"), "wb") as f:
+        pickle.dump(gas_opinf_dict, f)
