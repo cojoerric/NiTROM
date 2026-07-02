@@ -1,12 +1,13 @@
 import os
 import pickle
+import time
 import numpy as np
 
 import classes_cavity
 from nitrom.backend import mpi_allreduce_scalar, mpi_rank_size, set_backend
 from nitrom.latent_space_models.gas_polynomial_model import GasPolynomialModel
 from nitrom.latent_space_models.polynomial_model import PolynomialModel
-from nitrom.optimization import OpInfModule, solve_opinf, train, NitromModule
+from nitrom.optimization import OpInfModule, solve_opinf, train
 from nitrom.projections.linear_projection import LinearProjection
 from nitrom.roms.param_registry import ParamRegistry
 from nitrom.training_data import TrainingData, TrainingPool
@@ -73,6 +74,7 @@ Phi = U[:, :r]  # (200, r)
 projection = LinearProjection([Phi, Phi])  # orthogonal (Psi = Phi)
 
 models_dir = "./models/"
+reg = 1e-4  # Default regularization parameter
 
 
 def save_checkpoint(tensors, kind, path, gas_params=None) -> None:
@@ -94,7 +96,7 @@ def save_checkpoint(tensors, kind, path, gas_params=None) -> None:
 training_data = TrainingData(
     pool,
     which_trajs=list(range(n_traj)),
-    percent_time_length=1.0,
+    percent_time_length=0.5,
     leggauss_deg=5,
     nsave_rom=1,
 )
@@ -104,93 +106,51 @@ phi_tot = phi_pre @ Phi
 psi_tot = phi_pre @ Phi
 (A2r, A3r), _ = fom.assemble_petrov_galerkin_tensors(phi_tot, psi_tot, B, [0,0,1,0,0,0,0,0])
 
-# Sweep range
-regs = np.logspace(-6, -1, 50)
-
-best_opinf_reg = None
-best_opinf_cost = float("inf")
-best_opinf_tensors = None
-
-best_gas_reg = None
-best_gas_cost = float("inf")
-best_gas_params = None
-best_gas_physical_tensors = None
-
-printr(f"Running sweep over {len(regs)} regularization parameters from 1e-6 to 1e-1...")
-printr("-" * 75)
-printr(f"{'Regularization':<20} | {'OpInf NiTROM Cost':<22} | {'GAS-OpInf NiTROM Cost':<22}")
-printr("-" * 75)
-
-gas_init = None
-
-for reg in regs:
-    # 1) Solve standard OpInf analytically
-    opinf_model = PolynomialModel(r, poly_comp, dtype=dtype)
-    opinf = OpInfModule(training_data, opinf_model, projection, reg=reg)
-    solve_opinf(opinf)
-
-    # Evaluate standard OpInf NiTROM-based cost
-    opinf_registry = ParamRegistry(opinf_model, projection)
-    opinf_nitrom = NitromModule(training_data, opinf_registry, fom=fom, n_substeps=15)
-    opinf_cost = gcost(opinf_nitrom)
-
-    if opinf_cost < best_opinf_cost:
-        best_opinf_cost = opinf_cost
-        best_opinf_reg = reg
-        best_opinf_tensors = [np.copy(np.asarray(t)) for t in opinf_model.get_params()]
-
-    # 2) Train GAS-constrained OpInf, initialized from the previous solution (warm-start) or Galerkin
-    epochs = 2000
-    if gas_init is None:
-        seed = GasPolynomialModel(r, poly_comp, dtype=dtype)
-        seed.retract_general_tensors_to_gas_tensors([A2r, A3r], use_P_I=True)
-        gas_init = [*seed.get_params()]
-        epochs = 5000
-
-    gas_model = GasPolynomialModel(
-        r, poly_comp, dtype=dtype, gas_params=gas_init,
-    )
-    gas = OpInfModule(training_data, gas_model, projection, reg=reg)
-
-    # Train GAS-OpInf silently
-    train(gas, n_epochs=epochs, lr=1.0, optimizer_type="lbfgs", print_every=1, tol=1e-10)
-
-    # Save the current optimized parameters for the next iteration (warm-start)
-    gas_init = [np.copy(np.asarray(t)) for t in gas_model.get_params()]
-
-    # Evaluate GAS-OpInf NiTROM-based cost
-    gas_registry = ParamRegistry(gas_model, projection)
-    gas_nitrom = NitromModule(training_data, gas_registry, fom=fom, n_substeps=15)
-    gas_cost = gcost(gas_nitrom)
-
-    if gas_cost < best_gas_cost:
-        best_gas_cost = gas_cost
-        best_gas_reg = reg
-        best_gas_params = [np.copy(np.asarray(t)) for t in gas_model.get_params()]
-        best_gas_physical_tensors = [np.copy(np.asarray(t)) for t in gas_model.model.get_params()]
-        best_gas_loss = np.copy(np.asarray(gas.loss_history))
-        best_gas_gradnorm = np.copy(np.asarray(gas.gradnorm_history))
-
-    printr(f"{reg:20.6e} | {opinf_cost:22.6e} | {gas_cost:22.6e}")
-
-printr("-" * 75)
-printr(f"Optimal standard OpInf regularization: {best_opinf_reg:.6e} with NiTROM Cost: {best_opinf_cost:.6e}")
-printr(f"Optimal GAS-OpInf regularization:      {best_gas_reg:.6e} with NiTROM Cost: {best_gas_cost:.6e}")
-printr("-" * 75)
+# %% 1) Solve standard OpInf analytically
+printr("\n=== OpInf ===")
+opinf_model = PolynomialModel(r, poly_comp, dtype=dtype)
+opinf = OpInfModule(training_data, opinf_model, projection, reg=reg)
+solve_opinf(opinf)
 
 if rank == 0:
     os.makedirs(models_dir, exist_ok=True)
-    if best_opinf_tensors is not None:
-        save_checkpoint(best_opinf_tensors, "opinf", os.path.join(models_dir, "opinf_model.pkl"))
-    if best_gas_params is not None:
-        save_checkpoint(
-            best_gas_physical_tensors, "gas",
-            os.path.join(models_dir, "gas_opinf_model.pkl"), gas_params=best_gas_params,
-        )
-        gas_opinf_dict = {
-            "iters": np.arange(len(best_gas_loss)),
-            "loss": best_gas_loss,
-            "gradnorm": best_gas_gradnorm
-        }
-        with open(os.path.join(models_dir, "gas_opinf_history.pkl"), "wb") as f:
-            pickle.dump(gas_opinf_dict, f)
+    save_checkpoint(
+        [np.copy(np.asarray(t)) for t in opinf_model.get_params()],
+        "opinf",
+        os.path.join(models_dir, "opinf_model.pkl")
+    )
+
+# %% 2) Train GAS-constrained OpInf, initialized from Galerkin
+printr("\n=== GAS-OpInf ===")
+seed = GasPolynomialModel(r, poly_comp, dtype=dtype)
+seed.retract_general_tensors_to_gas_tensors([A2r, A3r], use_P_I=True)
+gas_init = [*seed.get_params()]
+
+gas_model = GasPolynomialModel(
+    r, poly_comp, dtype=dtype, gas_params=gas_init,
+)
+gas = OpInfModule(training_data, gas_model, projection, reg=reg)
+
+t0 = time.perf_counter()
+train(gas, n_epochs=5000, lr=1.0, optimizer_type="lbfgs", print_every=1, tol=1e-10)
+gas_opinf_time = time.perf_counter() - t0
+printr(f"training time: {gas_opinf_time:.4f} s")
+
+if rank == 0:
+    gas_params = [np.copy(np.asarray(t)) for t in gas_model.get_params()]
+    best_gas_physical_tensors = [np.copy(np.asarray(t)) for t in gas_model.model.get_params()]
+    save_checkpoint(
+        best_gas_physical_tensors,
+        "gas",
+        os.path.join(models_dir, "gas_opinf_model.pkl"),
+        gas_params=gas_params,
+    )
+
+    gas_opinf_dict = {
+        "iters": np.arange(len(gas.loss_history)),
+        "loss": gas.loss_history,
+        "gradnorm": gas.gradnorm_history,
+        "time": gas_opinf_time
+    }
+    with open(os.path.join(models_dir, "gas_opinf_history.pkl"), "wb") as f:
+        pickle.dump(gas_opinf_dict, f)

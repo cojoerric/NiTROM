@@ -1,5 +1,6 @@
 import os
 import pickle
+import time
 
 import fom_class
 import numpy as np
@@ -129,7 +130,10 @@ gas_model = GasPolynomialModel(
 gas = OpInfModule(training_data, gas_model, projection, reg=1.232847e-05)
 gas.set_unlearnable("B")  # B = Phi^T B_fom is fixed, not trained
 printr(f"initial cost: {gcost(gas):.6e}")
+t0 = time.perf_counter()
 train(gas, n_epochs=1000, lr=1.0, optimizer_type="lbfgs", print_every=1, tol=1e-14)
+gas_opinf_time = time.perf_counter() - t0
+printr(f"training time: {gas_opinf_time:.4f} s")
 printr(f"final cost:   {gcost(gas):.6e}")
 gas._sync_to_rom()
 gas_params = [np.asarray(t) for t in gas.rom.get_params()]
@@ -143,7 +147,8 @@ gas_opinf_gradnorm = gas.gradnorm_history
 gas_opinf_iters = np.arange(len(gas_opinf_loss))
 gas_opinf_dict = { "iters": gas_opinf_iters,
                     "loss": gas_opinf_loss,
-                    "gradnorm": gas_opinf_gradnorm }
+                    "gradnorm": gas_opinf_gradnorm,
+                    "time": gas_opinf_time }
 if rank == 0:
     with open(os.path.join(models_dir, "gas_opinf_history.pkl"), "wb") as f:
         pickle.dump(gas_opinf_dict, f)

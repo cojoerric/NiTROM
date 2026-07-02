@@ -1,5 +1,6 @@
 import os
 import pickle
+import time
 
 import fom_class
 import numpy as np
@@ -125,7 +126,10 @@ nitrom.set_unlearnable("B")  # B = Phi^T B_fom is fixed, not trained
 nitrom.set_manifold_types(["Phi", "Psi"], ["grassmann", "stiefel"])
 
 printr(f"initial cost: {gcost(nitrom):.6e}")
+t0 = time.perf_counter()
 train(nitrom, n_epochs=200, lr=1.0, optimizer_type="lbfgs", print_every=1, tol=1e-14)
+nitrom_time = time.perf_counter() - t0
+printr(f"training time: {nitrom_time:.4f} s")
 printr(f"final cost:   {gcost(nitrom):.6e}")
 
 nitrom._sync_to_registry()
@@ -141,7 +145,8 @@ nitrom_gradnorm = nitrom.gradnorm_history
 nitrom_iters = np.arange(len(nitrom_loss))
 nitrom_dict = {"iters": nitrom_iters,
                 "loss": nitrom_loss,
-                "gradnorm": nitrom_gradnorm}
+                "gradnorm": nitrom_gradnorm,
+                "time": nitrom_time}
 if rank == 0:
     with open(os.path.join(models_dir, "nitrom_history.pkl"), "wb") as f:
         pickle.dump(nitrom_dict, f) 
@@ -183,7 +188,10 @@ gas_nitrom.set_unlearnable("B")
 gas_nitrom.set_manifold_types(["Phi", "Psi"], ["grassmann", "stiefel"])
 
 printr(f"initial cost: {gcost(gas_nitrom):.6e}")
+t0_gas = time.perf_counter()
 train(gas_nitrom, n_epochs=200, lr=5e-3, optimizer_type="lbfgs", print_every=1, tol=1e-14)
+gas_nitrom_time = time.perf_counter() - t0_gas
+printr(f"training time: {gas_nitrom_time:.4f} s")
 printr(f"final cost:   {gcost(gas_nitrom):.6e}")
 
 gas_nitrom._sync_to_registry()
@@ -200,7 +208,8 @@ gas_nitrom_gradnorm = gas_nitrom.gradnorm_history
 gas_nitrom_iters = np.arange(len(gas_nitrom_loss))
 gas_nitrom_dict = {"iters": gas_nitrom_iters,
                 "loss": gas_nitrom_loss,
-                "gradnorm": gas_nitrom_gradnorm}
+                "gradnorm": gas_nitrom_gradnorm,
+                "time": gas_nitrom_time}
 if rank == 0:
     with open(os.path.join(models_dir, "gas_nitrom_history.pkl"), "wb") as f:
         pickle.dump(gas_nitrom_dict, f)
