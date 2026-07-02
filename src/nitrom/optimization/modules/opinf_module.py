@@ -4,6 +4,8 @@ from nitrom.latent_space_models.gas_polynomial_model import GasPolynomialModel
 from nitrom.latent_space_models.polynomial_model import PolynomialModel
 from nitrom.projections.projection import Projection
 from nitrom.training_data import TrainingData
+from nitrom.backend import distributed_rank_size
+
 
 from .base import InferenceModule
 
@@ -142,8 +144,10 @@ class OpInfModule(InferenceModule):
         cost = ((R_flat @ self.W) * R_flat).sum()
 
         # Regularization
+        _, world_size = distributed_rank_size()
+        reg = self.reg / world_size
         for tensor in self.rom.get_params():
-            cost = cost + self.reg * bkend.vector_norm(tensor) ** 2
+            cost = cost + reg * bkend.vector_norm(tensor) ** 2
 
         return cost
 
@@ -190,9 +194,12 @@ class OpInfModule(InferenceModule):
                         grads[i] = grads[i] + grads_j[i]
 
         # Add regularization gradients
+        from nitrom.backend import distributed_rank_size
+        _, world_size = distributed_rank_size()
+        reg = self.reg / world_size
         params = self.rom.get_params()
         for i in range(len(grads)):
-            grads[i] = grads[i] + 2.0 * self.reg * params[i]
+            grads[i] = grads[i] + 2.0 * reg * params[i]
 
         # Zero the gradient of any non-learnable parameter (base class).
         return self._apply_learnability(grads)

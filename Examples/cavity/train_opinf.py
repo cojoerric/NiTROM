@@ -140,12 +140,12 @@ for reg in regs:
         best_opinf_tensors = [np.copy(np.asarray(t)) for t in opinf_model.get_params()]
 
     # 2) Train GAS-constrained OpInf, initialized from the previous solution (warm-start) or Galerkin
-    epochs = 1000
+    epochs = 2000
     if gas_init is None:
         seed = GasPolynomialModel(r, poly_comp, dtype=dtype)
-        seed.retract_general_tensors_to_gas_tensors([A2r, A3r], optimize_F=True, F_cond_penalty=1e-1)
+        seed.retract_general_tensors_to_gas_tensors([A2r, A3r], optimize_F=False, F_cond_penalty=1e-1)
         gas_init = [*seed.get_params()]
-        epochs = 3000
+        epochs = 5000
 
     gas_model = GasPolynomialModel(
         r, poly_comp, dtype=dtype, gas_params=gas_init,

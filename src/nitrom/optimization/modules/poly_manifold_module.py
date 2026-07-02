@@ -1,8 +1,9 @@
 from typing import Any
 
-from nitrom.backend import get_backend
+from nitrom.backend import get_backend, distributed_rank_size
 from nitrom.projections.polynomial_projection import PolynomialProjection
 from nitrom.training_data import TrainingData
+
 
 from .base import InferenceModule
 
@@ -151,8 +152,10 @@ class PolyManifoldInfModule(InferenceModule):
         cost = ((R_flat @ self.W) * R_flat).sum()
 
         # Regularization on A_k
+        _, world_size = distributed_rank_size()
+        reg = self.reg / world_size
         for name in self._trainable_names:
-            cost = cost + self.reg * bkend.vector_norm(getattr(self.proj, name)) ** 2
+            cost = cost + reg * bkend.vector_norm(getattr(self.proj, name)) ** 2
 
         return cost
 
@@ -188,8 +191,11 @@ class PolyManifoldInfModule(InferenceModule):
         grads = list(all_grads[2:])
 
         # Add regularization
+        from nitrom.backend import distributed_rank_size
+        _, world_size = distributed_rank_size()
+        reg = self.reg / world_size
         for i, name in enumerate(self._trainable_names):
-            grads[i] = grads[i] + 2.0 * self.reg * getattr(self.proj, name)
+            grads[i] = grads[i] + 2.0 * reg * getattr(self.proj, name)
 
         # Zero the gradient of any non-learnable parameter (base class).
         return self._apply_learnability(grads)
