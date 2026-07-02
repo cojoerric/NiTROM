@@ -106,7 +106,7 @@ if rank == 0:
 
 printr("\n=== OpInf ===")
 opinf_model = PolynomialModel(r, poly_comp, dtype=dtype, forcing_config=forcing_config)
-opinf = OpInfModule(training_data, opinf_model, projection, reg=3.27549e-7)
+opinf = OpInfModule(training_data, opinf_model, projection, reg=2.983647e-07)
 opinf.set_unlearnable("B")  # B = Phi^T B_fom is fixed, not trained
 printr(f"initial cost: {gcost(opinf):.6e}")
 train(opinf, n_epochs=200, lr=1.0, optimizer_type="lbfgs", print_every=1, tol=1e-14)
@@ -126,7 +126,7 @@ gas_init = [*seed.get_params(), np.copy(opinf.B)]
 gas_model = GasPolynomialModel(
     r, poly_comp, dtype=dtype, gas_params=gas_init, forcing_config=forcing_config,
 )
-gas = OpInfModule(training_data, gas_model, projection, reg=1e-6)
+gas = OpInfModule(training_data, gas_model, projection, reg=1.232847e-05)
 gas.set_unlearnable("B")  # B = Phi^T B_fom is fixed, not trained
 printr(f"initial cost: {gcost(gas):.6e}")
 train(gas, n_epochs=1000, lr=1.0, optimizer_type="lbfgs", print_every=1, tol=1e-14)

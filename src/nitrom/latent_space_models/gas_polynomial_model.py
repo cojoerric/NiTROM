@@ -170,7 +170,8 @@ class GasPolynomialModel(Model):
         self,
         tensors: list,
         margin: float = 1e-3,
-        lyapunov_P: bool = True,
+        optimize_F: bool = False,
+        F_cond_penalty: float = 1e-4,
     ) -> None:
         r"""
         Retract general polynomial operator tensors ``[A, H]`` onto the GAS
@@ -233,6 +234,11 @@ class GasPolynomialModel(Model):
         :param margin: stability margin by which the spectrum is pushed into
             the left-half plane when ``A`` is not already strictly stable
         :type margin: float
+        :param optimize_F: if True, optimizes :math:`F = L^{-1}L^{-\top}` to minimize
+            :math:`\kappa(P) + \gamma\kappa(F)`
+        :type optimize_F: bool
+        :param F_cond_penalty: penalty weight :math:`\gamma` for the condition number of F
+        :type F_cond_penalty: float
         :raises RuntimeError: if the assembled ``[K, R, Q, S]`` fail to
             reconstruct the (stabilized) ``A``, or if a structured ``H``
             fails to be reconstructed
@@ -245,28 +251,83 @@ class GasPolynomialModel(Model):
         r = A.shape[0]
         eye = bkend.eye(r, dtype=self.dtype, device=self.device)
 
-        # Shift the spectrum to guarantee stability (and positive definiteness of M)
-        if lyapunov_P:
-            # Shift the spectrum into the open left-half plane if A is not already
-            # strictly stable (leave it unchanged otherwise).
-            abscissa = float(bkend.eigvals(A).real.max())
-            shift = abscissa + margin if abscissa >= 0.0 else 0.0
-            A = A - shift * eye
-        else:
-            # Shift the spectrum of sym(A) into the negative definite plane to guarantee M is SPD when P = I
-            sym_A = 0.5 * (A + A.T)
-            abscissa_sym = float(bkend.eigvals(sym_A).real.max())
-            shift = abscissa_sym + margin if abscissa_sym >= 0.0 else 0.0
-            A = A - shift * eye
+        import numpy as np
 
-        if lyapunov_P:
-            # Solve A^T P + P A = -I for the SPD Lyapunov solution P.
-            P_np = solve_continuous_lyapunov(
-                bkend.to_numpy(A.T), bkend.to_numpy(-eye)
+        # Shift the spectrum into the open left-half plane if A is not already
+        # strictly stable (leave it unchanged otherwise).
+        abscissa = float(bkend.eigvals(A).real.max())
+        shift = abscissa + margin if abscissa >= 0.0 else 0.0
+        A = A - shift * eye
+
+        if optimize_F:
+            from scipy.linalg import solve_triangular
+            from scipy.optimize import approx_fprime
+            from nitrom.optimization.manifold_optimization import riemannian_lbfgs
+
+            A_np = bkend.to_numpy(A)
+            
+            def build_L(x):
+                L = np.zeros((r, r))
+                L[np.tril_indices(r)] = x
+                return L
+
+            def cost_fn_flat(xs):
+                x = xs[0]
+                L = build_L(x)
+                try:
+                    L_inv = solve_triangular(L, np.eye(r), lower=True)
+                except (np.linalg.LinAlgError, ValueError):
+                    return 1e18
+                
+                F_np = L_inv @ L_inv.T
+                
+                try:
+                    P_np_opt = solve_continuous_lyapunov(A_np.T, -F_np)
+                except ValueError:
+                    return 1e18
+                
+                cond_P = np.linalg.cond(P_np_opt)
+                cond_F = np.linalg.cond(F_np)
+                
+                if not np.isfinite(cond_P) or not np.isfinite(cond_F):
+                    return 1e18
+                    
+                return cond_P + F_cond_penalty * cond_F
+
+            def grad_fn_flat(xs):
+                x = xs[0]
+                eps = 1e-8
+                g = approx_fprime(x, lambda v: cost_fn_flat([v]), eps)
+                return [g]
+
+            # Initial guess: L = I
+            x0 = np.eye(r)[np.tril_indices(r)]
+            
+            res_xs, res_f = riemannian_lbfgs(
+                cost_fn_flat,
+                grad_fn_flat,
+                x0=[x0],
+                manifolds=["euclidean"],
+                max_iter=100,
+                # callback=lambda it, f, gnorm: print(
+                #     f"F-Optimization Iteration {it+1} | Cost: {f:.4e} | gnorm: {gnorm:.2e}",
+                #     flush=True
+                # )
             )
-            P = bkend.asarray(P_np, dtype=self.dtype, device=self.device)
+            
+            L_opt = build_L(res_xs[0])
+            L_inv_opt = solve_triangular(L_opt, np.eye(r), lower=True)
+            F = bkend.asarray(L_inv_opt @ L_inv_opt.T, dtype=self.dtype, device=self.device)
         else:
-            P = eye
+            F = eye
+
+        # Solve A^T P + P A = -F for the SPD Lyapunov solution P.
+        P_np = solve_continuous_lyapunov(
+            bkend.to_numpy(A.T), bkend.to_numpy(-F)
+        )
+        P = bkend.asarray(P_np, dtype=self.dtype, device=self.device)
+        print("Condition number of P:", np.linalg.cond(P))
+        print("Condition number of F:", np.linalg.cond(F))
 
         P = 0.5 * (P + P.T)  # symmetrize against round-off
         Pinv = bkend.inv(P)

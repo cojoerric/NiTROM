@@ -92,8 +92,10 @@ B = np.ones((3, 1), dtype=dtype)
 C = np.ones((1, 3), dtype=dtype)
 fom = fom_class.full_order_model(A2, A3, B, C, dtype=dtype)
 
+(A2r, A3r), (Br, _) = fom.assemble_petrov_galerkin_tensors(Phi, Phi)
+
 # Sweep range
-regs = np.logspace(-8, -2, 100)
+regs = np.logspace(-9, -4, 100)
 
 best_opinf_reg = None
 best_opinf_cost = float("inf")
@@ -109,6 +111,7 @@ printr("-" * 75)
 printr(f"{'Regularization':<20} | {'OpInf NiTROM Cost':<22} | {'GAS-OpInf NiTROM Cost':<22}")
 printr("-" * 75)
 
+gas_init = None
 for reg in regs:
     # 1) Solve standard OpInf analytically
     opinf_model = PolynomialModel(r, poly_comp, dtype=dtype, forcing_config=forcing_config)
@@ -126,10 +129,11 @@ for reg in regs:
         best_opinf_reg = reg
         best_opinf_tensors = [np.copy(np.asarray(t)) for t in opinf_model.get_params()]
 
-    # 2) Train GAS-constrained OpInf, initialized from standard OpInf solved operators
-    seed = GasPolynomialModel(r, poly_comp, dtype=dtype)
-    seed.retract_general_tensors_to_gas_tensors([opinf_model.A_1, opinf_model.A_2])
-    gas_init = [*seed.get_params(), np.copy(opinf_model.B)]
+    # 2) Train GAS-constrained OpInf, initialized from Galerkin
+    if gas_init is None:
+        seed = GasPolynomialModel(r, poly_comp, dtype=dtype)
+        seed.retract_general_tensors_to_gas_tensors([A2r, A3r], optimize_F=True, F_cond_penalty=1e-2)
+        gas_init = [*seed.get_params(), np.copy(B_r)]
 
     gas_model = GasPolynomialModel(
         r, poly_comp, dtype=dtype, gas_params=gas_init, forcing_config=forcing_config,
@@ -139,6 +143,9 @@ for reg in regs:
 
     # Train GAS-OpInf silently
     train(gas, n_epochs=1000, lr=1.0, optimizer_type="lbfgs", print_every=0, tol=1e-10)
+
+    # Save the current optimized parameters for the next iteration (warm-start)
+    gas_init = [np.copy(np.asarray(t)) for t in gas_model.get_params()]
 
     # Evaluate GAS-OpInf NiTROM-based cost
     gas_registry = ParamRegistry(gas_model, projection)

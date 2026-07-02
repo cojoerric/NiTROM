@@ -143,7 +143,7 @@ for reg in regs:
     epochs = 1000
     if gas_init is None:
         seed = GasPolynomialModel(r, poly_comp, dtype=dtype)
-        seed.retract_general_tensors_to_gas_tensors([A2r, A3r], lyapunov_P=False)
+        seed.retract_general_tensors_to_gas_tensors([A2r, A3r], optimize_F=True, F_cond_penalty=1e-1)
         gas_init = [*seed.get_params()]
         epochs = 3000
 
@@ -153,7 +153,7 @@ for reg in regs:
     gas = OpInfModule(training_data, gas_model, projection, reg=reg)
 
     # Train GAS-OpInf silently
-    train(gas, n_epochs=epochs, lr=1.0, optimizer_type="lbfgs", print_every=0, tol=1e-10)
+    train(gas, n_epochs=epochs, lr=1.0, optimizer_type="lbfgs", print_every=1, tol=1e-10)
 
     # Save the current optimized parameters for the next iteration (warm-start)
     gas_init = [np.copy(np.asarray(t)) for t in gas_model.get_params()]
