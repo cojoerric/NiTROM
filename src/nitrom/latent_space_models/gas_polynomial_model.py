@@ -244,6 +244,9 @@ class GasPolynomialModel(Model):
             fails to be reconstructed
         """
         from scipy.linalg import solve_continuous_lyapunov
+        from ..backend import mpi_rank_size
+        rank, _ = mpi_rank_size()
+        printable = rank == 0
 
         bkend = self.backend
         A = bkend.asarray(tensors[0], dtype=self.dtype, device=self.device)
@@ -309,10 +312,12 @@ class GasPolynomialModel(Model):
                 x0=[x0],
                 manifolds=["euclidean"],
                 max_iter=100,
-                # callback=lambda it, f, gnorm: print(
-                #     f"F-Optimization Iteration {it+1} | Cost: {f:.4e} | gnorm: {gnorm:.2e}",
-                #     flush=True
-                # )
+                callback=(
+                    lambda it, f, gnorm: print(
+                        f"F-Optimization Iteration {it+1} | Cost: {f:.4e} | gnorm: {gnorm:.2e}",
+                        flush=True
+                    )
+                ) if printable else None
             )
             
             L_opt = build_L(res_xs[0])
@@ -326,8 +331,9 @@ class GasPolynomialModel(Model):
             bkend.to_numpy(A.T), bkend.to_numpy(-F)
         )
         P = bkend.asarray(P_np, dtype=self.dtype, device=self.device)
-        print("Condition number of P:", np.linalg.cond(P))
-        print("Condition number of F:", np.linalg.cond(F))
+        if printable:
+            print("Condition number of P:", np.linalg.cond(P))
+            print("Condition number of F:", np.linalg.cond(F))
 
         P = 0.5 * (P + P.T)  # symmetrize against round-off
         Pinv = bkend.inv(P)
