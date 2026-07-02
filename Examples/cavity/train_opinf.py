@@ -143,7 +143,7 @@ for reg in regs:
     epochs = 2000
     if gas_init is None:
         seed = GasPolynomialModel(r, poly_comp, dtype=dtype)
-        seed.retract_general_tensors_to_gas_tensors([A2r, A3r], optimize_F=False, F_cond_penalty=1e-1)
+        seed.retract_general_tensors_to_gas_tensors([A2r, A3r], use_P_I=True)
         gas_init = [*seed.get_params()]
         epochs = 5000
 
