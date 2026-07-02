@@ -1,7 +1,11 @@
 from typing import Any
+from scipy.linalg import solve_continuous_lyapunov
+import numpy as np
+
 
 from .model import Model
 from .polynomial_model import PolynomialModel
+from ..backend import mpi_rank_size
 
 
 class GasPolynomialModel(Model):
@@ -247,8 +251,6 @@ class GasPolynomialModel(Model):
             reconstruct the (stabilized) ``A``, or if a structured ``H``
             fails to be reconstructed
         """
-        from scipy.linalg import solve_continuous_lyapunov
-        from ..backend import mpi_rank_size
         rank, _ = mpi_rank_size()
         printable = rank == 0
 
@@ -258,15 +260,12 @@ class GasPolynomialModel(Model):
         r = A.shape[0]
         eye = bkend.eye(r, dtype=self.dtype, device=self.device)
 
-        import numpy as np
-
         # Shift the spectrum into the open left-half plane if A is not already
         # strictly stable (leave it unchanged otherwise). If P = I, we shift
         # so that sym(A) is negative definite (required to get an SPD M).
         if use_P_I:
             sym_A = A + A.T
             abscissa = float(bkend.eigh(sym_A)[0].max())
-            print(abscissa)
         else:
             abscissa = float(bkend.eigvals(A).real.max())
         shift = abscissa + margin if abscissa >= 0.0 else 0.0
@@ -345,9 +344,6 @@ class GasPolynomialModel(Model):
                 bkend.to_numpy(A.T), bkend.to_numpy(-F)
             )
             P = bkend.asarray(P_np, dtype=self.dtype, device=self.device)
-        if printable:
-            print("Condition number of P:", np.linalg.cond(P))
-            print("Condition number of F:", np.linalg.cond(F))
 
         P = 0.5 * (P + P.T)  # symmetrize against round-off
         Pinv = bkend.inv(P)
