@@ -165,7 +165,7 @@ def _train_numpy(
         )
         xk, fk = riemannian_optimize(
             cost_fn, rgrad_fn, xs0, mlist, make_direction(),
-            max_iter=n_epochs, gtol=max(tol, 1e-10),
+            max_iter=n_epochs, gtol=tol,
             ftol=max(tol, 1e-12), callback=progress,
         )
         if fk < best_f:

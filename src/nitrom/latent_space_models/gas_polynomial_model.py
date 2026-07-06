@@ -60,11 +60,11 @@ class GasPolynomialModel(Model):
         param_names: list[str] = []
         gas_shapes: list[tuple[int, ...]] = []
         if 1 in poly_comp:
-            param_names.extend(["K", "R"])
-            gas_shapes.extend([(r, r), (r, r)])
+            param_names.extend(["K", "R", "Q"])
+            gas_shapes.extend([(r, r), (r, r), (r, r)])
         if 2 in poly_comp:
-            param_names.extend(["Q", "S"])
-            gas_shapes.extend([(r, r), (r, r, r)])
+            param_names.extend(["S"])
+            gas_shapes.extend([(r, r, r)])
 
         # Track forcing.  An optional fixed input operator may be supplied via
         # ``forcing_config["B"]``; B stays a parameter but is flagged
