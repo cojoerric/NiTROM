@@ -21,7 +21,7 @@ dtype = np.float64
 rank, world_size = mpi_rank_size()
 
 traj_path = "./trajectories/"
-models_dir = "./models/"
+models_dir = "./models_discrete_adjoint/"
 n_traj = 4
 r = 2  # reduced dimension
 poly_comp = [1, 2]
@@ -29,7 +29,7 @@ poly_comp = [1, 2]
 # Initialization model for GAS-NiTROM: "galerkin", "gas_opinf", or "nitrom".
 # "gas_opinf" requires train_opinf.py to have been run first (writes
 # ./models/gas_opinf_model.pkl).
-init_model = "gas_opinf"
+init_model = "galerkin"
 
 if rank == 0:
     os.makedirs(models_dir, exist_ok=True)
@@ -93,7 +93,7 @@ training_data = TrainingData(
     which_trajs=list(range(n_traj)),
     percent_time_length=1.0,
     leggauss_deg=5,
-    nsave_rom=1,
+    nsave_rom=15,
 )
 
 # %% Setup the FOM
@@ -121,7 +121,7 @@ nitrom_model = PolynomialModel(
     r, poly_comp, dtype=dtype, forcing_config=forcing_config, tensors=(A2r, A3r, Br),
 )
 registry = ParamRegistry(nitrom_model, projection)
-nitrom = NitromModule(training_data, registry, fom=fom, n_substeps=10)
+nitrom = NitromModule(training_data, registry, fom=fom, n_substeps=15, adjoint_method='discrete')
 nitrom.set_unlearnable("B")  # B = Phi^T B_fom is fixed, not trained
 nitrom.set_manifold_types(["Phi", "Psi"], ["grassmann", "stiefel"])
 
@@ -173,7 +173,7 @@ else:
     tensors = [np.asarray(t, dtype=dtype) for t in ckpt["tensors"]]
     # Retract the general operator tensors (A, H) onto the GAS manifold.
     seed = GasPolynomialModel(r, poly_comp, dtype=dtype)
-    seed.retract_general_tensors_to_gas_tensors(tensors[:2])
+    seed.retract_general_tensors_to_gas_tensors(tensors[:2], optimize_F=True, F_cond_penalty=1e-2)
     gas_init = [*seed.get_params(), np.copy(tensors[2])]
 
 gas_nitrom_model = GasPolynomialModel(
@@ -183,13 +183,13 @@ gas_nitrom_model = GasPolynomialModel(
 # Start the projection from the loaded bases.
 projection_gas = LinearProjection([init_Phi, init_Psi])
 registry_gas = ParamRegistry(gas_nitrom_model, projection_gas)
-gas_nitrom = NitromModule(training_data, registry_gas, fom=fom, n_substeps=15)
+gas_nitrom = NitromModule(training_data, registry_gas, fom=fom, n_substeps=15, adjoint_method='discrete')
 gas_nitrom.set_unlearnable("B")
 gas_nitrom.set_manifold_types(["Phi", "Psi"], ["grassmann", "stiefel"])
 
 printr(f"initial cost: {gcost(gas_nitrom):.6e}")
 t0_gas = time.perf_counter()
-train(gas_nitrom, n_epochs=200, lr=5e-3, optimizer_type="lbfgs", print_every=1, tol=1e-14)
+train(gas_nitrom, n_epochs=200, lr=1.0, optimizer_type="lbfgs", print_every=1, tol=1e-14)
 gas_nitrom_time = time.perf_counter() - t0_gas
 printr(f"training time: {gas_nitrom_time:.4f} s")
 printr(f"final cost:   {gcost(gas_nitrom):.6e}")

@@ -56,7 +56,7 @@ B_fom = np.ones((Phi.shape[0], 1), dtype=dtype)
 B_r = projection.encode(B_fom.T).T  # fixed reduced input operator, (r, m)
 forcing_config = {"forcing_exists": True, "B": B_r, "m": B_fom.shape[1]}
 
-models_dir = "./models/"
+models_dir = "./models_discrete/"
 
 
 def save_checkpoint(tensors, kind, path, gas_params=None) -> None:
@@ -121,7 +121,7 @@ for reg in regs:
 
     # Evaluate standard OpInf NiTROM-based cost
     opinf_registry = ParamRegistry(opinf_model, projection)
-    opinf_nitrom = NitromModule(training_data, opinf_registry, fom=fom, n_substeps=10)
+    opinf_nitrom = NitromModule(training_data, opinf_registry, fom=fom, n_substeps=30)
     opinf_cost = gcost(opinf_nitrom)
 
     if opinf_cost < best_opinf_cost:
@@ -149,7 +149,7 @@ for reg in regs:
 
     # Evaluate GAS-OpInf NiTROM-based cost
     gas_registry = ParamRegistry(gas_model, projection)
-    gas_nitrom = NitromModule(training_data, gas_registry, fom=fom, n_substeps=10)
+    gas_nitrom = NitromModule(training_data, gas_registry, fom=fom, n_substeps=30)
     gas_cost = gcost(gas_nitrom)
 
     if gas_cost < best_gas_cost:

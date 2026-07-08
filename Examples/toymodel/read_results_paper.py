@@ -63,9 +63,9 @@ def add_training_window(ax, x_end=10.0):
 
 
 def save_figure(fig, stem):
-    os.makedirs("figures", exist_ok=True)
-    fig.savefig(f"figures/{stem}.eps", format="eps")
-    fig.savefig(f"figures/{stem}.png", format="png")
+    os.makedirs("figures_discrete_adjoint", exist_ok=True)
+    fig.savefig(f"figures_discrete_adjoint/{stem}.eps", format="eps")
+    fig.savefig(f"figures_discrete_adjoint/{stem}.png", format="png")
     plt.close(fig)
 
 
@@ -81,7 +81,7 @@ C = np.ones((1, n), dtype=dtype)
 fom = fom_class.full_order_model(A2, A3, B, C, dtype=dtype)
 
 # Load the trained ROMs
-models_dir = "./models/"
+models_dir = "./models_discrete_adjoint/"
 
 
 def load_rom(fname):
