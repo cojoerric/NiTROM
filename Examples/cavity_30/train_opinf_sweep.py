@@ -105,7 +105,7 @@ psi_tot = phi_pre @ Phi
 (A2r, A3r), _ = fom.assemble_petrov_galerkin_tensors(phi_tot, psi_tot, B, [0,0,1,0,0,0,0,0])
 
 # Sweep range
-regs = np.logspace(1, 4, 50)
+regs = np.logspace(-6, -1, 50)
 
 best_opinf_reg = None
 best_opinf_cost = float("inf")
@@ -116,7 +116,7 @@ best_gas_cost = float("inf")
 best_gas_params = None
 best_gas_physical_tensors = None
 
-printr(f"Running sweep over {len(regs)} regularization parameters from 1e1 to 1e4...")
+printr(f"Running sweep over {len(regs)} regularization parameters from 1e-6 to 1e-1...")
 printr("-" * 75)
 printr(f"{'Regularization':<20} | {'OpInf NiTROM Cost':<22} | {'GAS-OpInf NiTROM Cost':<22}")
 printr("-" * 75)
@@ -140,12 +140,12 @@ for reg in regs:
         best_opinf_tensors = [np.copy(np.asarray(t)) for t in opinf_model.get_params()]
 
     # 2) Train GAS-constrained OpInf, initialized from the previous solution (warm-start) or Galerkin
-    epochs = 2000
+    epochs = 4000
     if gas_init is None:
         seed = GasPolynomialModel(r, poly_comp, dtype=dtype)
         seed.retract_general_tensors_to_gas_tensors([A2r, A3r], use_P_I=True)
         gas_init = [*seed.get_params()]
-        epochs = 5000
+        epochs = 8000
 
     gas_model = GasPolynomialModel(
         r, poly_comp, dtype=dtype, gas_params=gas_init,
