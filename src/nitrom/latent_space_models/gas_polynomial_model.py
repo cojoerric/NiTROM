@@ -410,7 +410,7 @@ class GasPolynomialModel(Model):
         """Delegate to the inner :class:`PolynomialModel`."""
         return self.model.evaluate_adjoint_rhs(t, z, Z, **kwargs)
 
-    def vjp_evaluate_rhs(self, z: Any, v: Any, **kwargs) -> list[Any]:
+    def vjp_evaluate_rhs(self, z: Any, v: Any, reg: float = 0.0, **kwargs) -> list[Any]:
         r"""
         VJP of the RHS with respect to the GAS parameters.
 
@@ -424,7 +424,7 @@ class GasPolynomialModel(Model):
         :rtype: list
         """
         bkend = self.backend
-        inner_grads = self.model.vjp_evaluate_rhs(z, v, **kwargs)
+        inner_grads = self.model.vjp_evaluate_rhs(z, v, reg=reg, **kwargs)
 
         # Unpack inner gradients (indexed by position in poly_comp)
         grad_A = inner_grads[self.poly_comp.index(1)] if 1 in self.poly_comp else None

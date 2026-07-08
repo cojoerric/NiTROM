@@ -117,7 +117,21 @@ def solve_opinf(module: OpInfModule) -> OpInfModule:
         except ImportError:
             pass
 
-    reg_matrix = module.reg * bkend.eye(Q_dim, dtype=dtype, device=device)
+    import numpy as np
+    reg_diag_np = np.zeros(Q_dim, dtype=float)
+    offset = 0
+    for name in learnable_params:
+        if name == "B":
+            num_cols = U_flat.shape[0]
+        else:
+            d = int(name.split("_")[1])
+            num_cols = r**d
+            if d == 2:
+                reg_diag_np[offset : offset + num_cols] = module.reg
+        offset += num_cols
+
+    reg_diag_tensor = bkend.asarray(reg_diag_np, dtype=dtype, device=device)
+    reg_matrix = bkend.diag(reg_diag_tensor)
     A = Q_w_Q_T + reg_matrix
 
     # Solve via eigh: A = V @ diag(val) @ V.T -> A_inv = (V * val_inv[None, :]) @ V.T

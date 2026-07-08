@@ -143,11 +143,17 @@ class OpInfModule(InferenceModule):
         R_flat = bkend.permute(R, (1, 0, 2)).reshape(self.rom.state_dimension, -1)
         cost = ((R_flat @ self.W) * R_flat).sum()
 
-        # Regularization
+        # Regularization on the quadratic tensor H
         _, world_size = distributed_rank_size()
         reg = self.reg / world_size
-        for tensor in self.rom.get_params():
-            cost = cost + reg * bkend.vector_norm(tensor) ** 2
+        if hasattr(self.rom, "poly_comp") and 2 in self.rom.poly_comp:
+            if hasattr(self.rom, "model"):
+                idx = self.rom.model.poly_comp.index(2)
+                H = self.rom.model.get_params()[idx]
+            else:
+                idx = self.rom.poly_comp.index(2)
+                H = self.rom.get_params()[idx]
+            cost = cost + reg * bkend.vector_norm(H) ** 2
 
         return cost
 
@@ -175,16 +181,24 @@ class OpInfModule(InferenceModule):
         if self.forcing_fns is None or len(self.forcing_fns) == 0:
             Z_flat = bkend.permute(self.Z, (0, 2, 1)).reshape(-1, r)
             v = -2.0 * bkend.permute(RW, (0, 2, 1)).reshape(-1, r)
-            grads = self.rom.vjp_evaluate_rhs(Z_flat, v)
+            from nitrom.backend import distributed_rank_size
+            _, world_size = distributed_rank_size()
+            reg = self.reg / world_size
+            grads = self.rom.vjp_evaluate_rhs(Z_flat, v, reg=reg)
         else:
             # Accumulate VJP over time snapshots
             grads = None
+            from nitrom.backend import distributed_rank_size
+            _, world_size = distributed_rank_size()
+            reg_val = self.reg / world_size
             for j in range(self.nt):
                 t_j = self.time[j]
                 z_j = self.Z[:, :, j]           # (ntraj, r)
                 v_j = -2.0 * RW[:, :, j]        # (ntraj, r)
+                reg_j = reg_val if j == 0 else 0.0
                 grads_j = self.rom.vjp_evaluate_rhs(
                     z_j, v_j,
+                    reg=reg_j,
                     external_forcing=self.forcing_fns, t=t_j,
                 )
                 if grads is None:
@@ -192,14 +206,6 @@ class OpInfModule(InferenceModule):
                 else:
                     for i in range(len(grads)):
                         grads[i] = grads[i] + grads_j[i]
-
-        # Add regularization gradients
-        from nitrom.backend import distributed_rank_size
-        _, world_size = distributed_rank_size()
-        reg = self.reg / world_size
-        params = self.rom.get_params()
-        for i in range(len(grads)):
-            grads[i] = grads[i] + 2.0 * reg * params[i]
 
         # Zero the gradient of any non-learnable parameter (base class).
         return self._apply_learnability(grads)

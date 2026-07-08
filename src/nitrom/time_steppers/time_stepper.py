@@ -5,6 +5,35 @@ from nitrom.backend import get_backend
 from nitrom.utils import interp_quadratic
 
 
+_BUTCHER_TABLEAUS = {
+    "rk4": {
+        "c": [0.0, 0.5, 0.5, 1.0],
+        "b": [1.0/6.0, 1.0/3.0, 1.0/3.0, 1.0/6.0],
+        "A": [
+            [0.0, 0.0, 0.0, 0.0],
+            [0.5, 0.0, 0.0, 0.0],
+            [0.0, 0.5, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0]
+        ]
+    },
+    "rk2": {
+        "c": [0.0, 1.0],
+        "b": [0.5, 0.5],
+        "A": [
+            [0.0, 0.0],
+            [1.0, 0.0]
+        ]
+    },
+    "backward_euler": {
+        "c": [1.0],
+        "b": [1.0],
+        "A": [
+            [1.0]
+        ]
+    }
+}
+
+
 def _jacobian_f(f, t_eval, y, args, kwargs, bkend):
     """Jacobian of ``f(t_eval, .)`` at ``y`` -- ``(n, n)`` or batched ``(B, n, n)``.
 
@@ -138,23 +167,41 @@ def evolve(
     :param kwargs: extra keyword arguments forwarded to *f*
     :returns: state at time :math:`t + \Delta t`
     """
-    if method == "rk4":
-        k1 = f(t, x, *args, **kwargs)
-        k2 = f(t + dt / 2, x + dt / 2 * k1, *args, **kwargs)
-        k3 = f(t + dt / 2, x + dt / 2 * k2, *args, **kwargs)
-        k4 = f(t + dt, x + dt * k3, *args, **kwargs)
-        x_next = x + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
-    elif method == "rk2":
-        k1 = f(t, x, *args, **kwargs)
-        k2 = f(t + dt, x + dt * k1, *args, **kwargs)
-        x_next = x + dt / 2 * (k1 + k2)
-    elif method == "backward_euler":
-        # Predictor step: forward Euler for a good initial guess.
-        y0 = x + dt * f(t, x, *args, **kwargs)
-        x_next = _newton_solve(
-            f, t + dt, y0, x, dt, 1.0,
-            newton_tol, newton_max_iter, *args, **kwargs,
-        )
+    if method in _BUTCHER_TABLEAUS:
+        tableau = _BUTCHER_TABLEAUS[method]
+        c = tableau["c"]
+        b = tableau["b"]
+        A = tableau["A"]
+        s = len(c)
+
+        stages_k = []
+        for i in range(s):
+            val = None
+            for j in range(i):
+                if A[i][j] != 0.0:
+                    term = A[i][j] * stages_k[j]
+                    val = term if val is None else val + term
+            const_i = x if val is None else x + dt * val
+
+            if A[i][i] != 0.0:  # Implicit stage
+                f_guess = f(t, x, *args, **kwargs)
+                y0 = const_i + dt * A[i][i] * f_guess
+                g_i = _newton_solve(
+                    f, t + c[i] * dt, y0, const_i, dt, A[i][i],
+                    newton_tol, newton_max_iter, *args, **kwargs,
+                )
+                k_i = f(t + c[i] * dt, g_i, *args, **kwargs)
+            else:  # Explicit stage
+                g_i = const_i
+                k_i = f(t + c[i] * dt, g_i, *args, **kwargs)
+            stages_k.append(k_i)
+
+        val_next = None
+        for i in range(s):
+            if b[i] != 0.0:
+                term = b[i] * stages_k[i]
+                val_next = term if val_next is None else val_next + term
+        x_next = x if val_next is None else x + dt * val_next
     else:
         raise ValueError(f"Unknown integration method: {method}")
     return x_next
@@ -245,7 +292,9 @@ def solve_adjoint_ivp_discrete(
     sub_t: Any,
     h: float,
     lam_init: Any,
-    method: Literal["rk4", "rk2"] = "rk4",
+    method: Literal["rk4", "rk2", "backward_euler"] = "rk4",
+    newton_tol: float = 1e-8,
+    newton_max_iter: int = 20,
     *args,
     **kwargs,
 ) -> tuple[Any, list[Any]]:
@@ -255,104 +304,103 @@ def solve_adjoint_ivp_discrete(
 
     :param f: right-hand side evaluate_rhs: ``(t, z, *args, **kwargs) -> dz``
     :param vjp_z: VJP w.r.t state (evaluate_adjoint_rhs): ``(t, w, z, *args, **kwargs) -> dz_vjp``
-    :param vjp_theta: VJP w.r.t parameters: ``(z, w, t=t, *args, **kwargs) -> list_of_theta_vjps``
+    :param vjp_theta: VJP w.r.t parameters: ``(z, w, t) -> list_of_theta_vjps``
     :param Zint: forward trajectory states over the sub-grid: ``(B, n, n_substeps + 1)``
     :param sub_t: time values of the sub-grid: ``(n_substeps + 1,)``
     :param h: step size
     :param lam_init: initial adjoint seed state: ``(B, n)``
-    :param method: ``"rk4"`` or ``"rk2"``
+    :param method: ``"rk4"``, ``"rk2"``, or ``"backward_euler"``
     :returns: tuple containing the final adjoint state and the accumulated parameter gradients list
     """
     bkend = get_backend()
     lam = bkend.copy(lam_init) if hasattr(lam_init, "copy") else lam_init * 1.0
     
+    if method not in _BUTCHER_TABLEAUS:
+        raise NotImplementedError(f"Discrete adjoint not implemented for {method}")
+        
+    tableau = _BUTCHER_TABLEAUS[method]
+    c = tableau["c"]
+    b = tableau["b"]
+    A = tableau["A"]
+    s = len(c)
+    
     n_substeps = len(sub_t) - 1
     param_grads = None
     
+    dtype = Zint.dtype
+    dev = bkend.device_of(Zint)
+    n = Zint.shape[1]
+    
+    eye = bkend.eye(n, dtype=dtype, device=dev)
+    if Zint.ndim == 3:
+        eye = eye[None]  # (1, n, n) for batch broadcasting
+        
     for j in range(n_substeps - 1, -1, -1):
         z_n = Zint[:, :, j]
         t_n = float(sub_t[j])
         
-        if method == "rk4":
-            k1 = f(t_n, z_n, *args, **kwargs)
-            k2 = f(t_n + h / 2.0, z_n + (h / 2.0) * k1, *args, **kwargs)
-            k3 = f(t_n + h / 2.0, z_n + (h / 2.0) * k2, *args, **kwargs)
+        # 1. Reconstruct forward stages locally
+        stages_g = []
+        stages_k = []
+        for i in range(s):
+            val = None
+            for idx_j in range(i):
+                if A[i][idx_j] != 0.0:
+                    term = A[i][idx_j] * stages_k[idx_j]
+                    val = term if val is None else val + term
+            const_i = z_n if val is None else z_n + h * val
             
-            x4 = z_n + h * k3
-            x3 = z_n + (h / 2.0) * k2
-            x2 = z_n + (h / 2.0) * k1
-            x1 = z_n
+            if A[i][i] != 0.0:  # Implicit stage
+                f_guess = f(t_n, z_n, *args, **kwargs)
+                y0 = const_i + h * A[i][i] * f_guess
+                g_i = _newton_solve(
+                    f, t_n + c[i] * h, y0, const_i, h, A[i][i],
+                    newton_tol, newton_max_iter, *args, **kwargs,
+                )
+                k_i = f(t_n + c[i] * h, g_i, *args, **kwargs)
+            else:  # Explicit stage
+                g_i = const_i
+                k_i = f(t_n + c[i] * h, g_i, *args, **kwargs)
+            stages_g.append(g_i)
+            stages_k.append(k_i)
             
-            lam_x = bkend.copy(lam) if hasattr(lam, "copy") else lam * 1.0
-            w4 = lam * (h / 6.0)
-            w3 = lam * (h / 3.0)
-            w2 = lam * (h / 3.0)
-            w1 = lam * (h / 6.0)
-            
-            # Stage 4
-            dz4 = vjp_z(t_n + h, w4, x4, *args, **kwargs)
-            dtheta4 = vjp_theta(x4, w4, t=t_n + h, *args, **kwargs)
-            lam_x = lam_x + dz4
-            w3 = w3 + h * dz4
-            if param_grads is None:
-                param_grads = [bkend.zeros_like(p) for p in dtheta4]
-            for idx, g in enumerate(dtheta4):
-                param_grads[idx] = param_grads[idx] + g
+        # 2. Initialize adjoint variables for the step
+        bar_k = [lam * (h * b[i]) for i in range(s)]
+        bar_g = [None] * s
+        
+        lam_x = bkend.copy(lam) if hasattr(lam, "copy") else lam * 1.0
+        
+        # 3. Backward stage loop
+        for i in range(s - 1, -1, -1):
+            if bar_k[i] is not None:
+                if A[i][i] != 0.0:  # Implicit stage solve (transposed system)
+                    J_f = _jacobian_f(f, t_n + c[i] * h, stages_g[i], args, kwargs, bkend)
+                    if J_f.ndim == 2:
+                        J_F_T = eye - (h * A[i][i]) * bkend.permute(J_f, (1, 0))
+                    else:
+                        J_F_T = eye - (h * A[i][i]) * bkend.permute(J_f, (0, 2, 1))
+                    w_i = bkend.solve(J_F_T, bar_k[i])
+                else:  # Explicit stage
+                    w_i = bar_k[i]
+                    
+                # Compute state VJP: dz_i = VJP_z(t_n + c_i * h, w_i, g_i)
+                dz_i = vjp_z(t_n + c[i] * h, w_i, stages_g[i], *args, **kwargs)
+                bar_g[i] = dz_i
                 
-            # Stage 3
-            dz3 = vjp_z(t_n + h / 2.0, w3, x3, *args, **kwargs)
-            dtheta3 = vjp_theta(x3, w3, t=t_n + h / 2.0, *args, **kwargs)
-            lam_x = lam_x + dz3
-            w2 = w2 + (h / 2.0) * dz3
-            for idx, g in enumerate(dtheta3):
-                param_grads[idx] = param_grads[idx] + g
-                
-            # Stage 2
-            dz2 = vjp_z(t_n + h / 2.0, w2, x2, *args, **kwargs)
-            dtheta2 = vjp_theta(x2, w2, t=t_n + h / 2.0, *args, **kwargs)
-            lam_x = lam_x + dz2
-            w1 = w1 + (h / 2.0) * dz2
-            for idx, g in enumerate(dtheta2):
-                param_grads[idx] = param_grads[idx] + g
-                
-            # Stage 1
-            dz1 = vjp_z(t_n, w1, x1, *args, **kwargs)
-            dtheta1 = vjp_theta(x1, w1, t=t_n, *args, **kwargs)
-            lam_x = lam_x + dz1
-            for idx, g in enumerate(dtheta1):
-                param_grads[idx] = param_grads[idx] + g
-                
-            lam = lam_x
-            
-        elif method == "rk2":
-            k1 = f(t_n, z_n, *args, **kwargs)
-            x2 = z_n + h * k1
-            x1 = z_n
-            
-            lam_x = bkend.copy(lam) if hasattr(lam, "copy") else lam * 1.0
-            w2 = lam * (h / 2.0)
-            w1 = lam * (h / 2.0)
-            
-            # Stage 2
-            dz2 = vjp_z(t_n + h, w2, x2, *args, **kwargs)
-            dtheta2 = vjp_theta(x2, w2, t=t_n + h, *args, **kwargs)
-            lam_x = lam_x + dz2
-            w1 = w1 + h * dz2
-            if param_grads is None:
-                param_grads = [bkend.zeros_like(p) for p in dtheta2]
-            for idx, g in enumerate(dtheta2):
-                param_grads[idx] = param_grads[idx] + g
-                
-            # Stage 1
-            dz1 = vjp_z(t_n, w1, x1, *args, **kwargs)
-            dtheta1 = vjp_theta(x1, w1, t=t_n, *args, **kwargs)
-            lam_x = lam_x + dz1
-            for idx, g in enumerate(dtheta1):
-                param_grads[idx] = param_grads[idx] + g
-                
-            lam = lam_x
-            
-        else:
-            raise NotImplementedError(f"Discrete adjoint not implemented for {method}")
-            
+                # Compute parameter VJP
+                dtheta_i = vjp_theta(stages_g[i], w_i, t_n + c[i] * h)
+                if param_grads is None:
+                    param_grads = [bkend.zeros_like(p) for p in dtheta_i]
+                for idx, g_param in enumerate(dtheta_i):
+                    param_grads[idx] = param_grads[idx] + g_param
+                    
+            if bar_g[i] is not None:
+                lam_x = lam_x + bar_g[i]
+                for idx_j in range(i):
+                    if A[i][idx_j] != 0.0:
+                        term = bar_g[i] * (h * A[i][idx_j])
+                        bar_k[idx_j] = term if bar_k[idx_j] is None else bar_k[idx_j] + term
+                        
+        lam = lam_x
+        
     return lam, param_grads

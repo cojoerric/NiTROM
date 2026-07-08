@@ -251,7 +251,7 @@ class PolynomialModel(Model):
 
         return dzdt
 
-    def vjp_evaluate_rhs(self, z: Any, v: Any, **kwargs) -> list[Any]:
+    def vjp_evaluate_rhs(self, z: Any, v: Any, reg: float = 0.0, **kwargs) -> list[Any]:
         r"""
         VJP of :meth:`evaluate_rhs` with respect to the operator tensors
         and, if forcing is present, with respect to :math:`B`.
@@ -321,5 +321,10 @@ class PolynomialModel(Model):
                     u = bkend.atleast_1d(f_fun_lst[j](t))
                     grad_B += bkend.outer(v[j], u)
                 grads.append(grad_B)
+
+        if reg > 0.0:
+            for i, k in enumerate(self.poly_comp):
+                if k == 2:
+                    grads[i] = grads[i] + 2.0 * reg * self.get_params()[i]
 
         return grads
