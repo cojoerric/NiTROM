@@ -122,7 +122,8 @@ def strong_wolfe_line_search(
     def eval_cost(t):  # cheap probe: retraction + cost only
         y = [retract(xi, t * di, m)
              for xi, di, m in zip(x, d, manifolds, strict=True)]
-        return y, cost_fn(y)
+        f = cost_fn(y)
+        return y, f
 
     def eval_grad(y):  # expensive probe: gradient + transported slope at y
         g = rgrad_fn(y)
@@ -197,6 +198,25 @@ def _armijo_backtracking(
              for xi, di, m in zip(x, d, manifolds, strict=True)]
         f = cost_fn(y)
         if f <= f0 + c1 * t * gd:
+            return t, y, f, rgrad_fn(y)
+        t *= 0.5
+    return None
+
+
+def _armijo_backtracking_increase(
+    cost_fn, rgrad_fn, x, d, manifolds, f0, g0, max_bt=40,
+):
+    r"""Fallback backtracking allowing the cost function to increase by up to 1%."""
+    norm_d = _list_inner(d, d) ** 0.5
+    t = 1.0 / max(norm_d, 1.0)
+    print(f"    [Armijo-Increase LineSearch] norm_d = {norm_d:.6e} | initial cost = {f0:.6e}")
+    for bt in range(max_bt):
+        y = [retract(xi, t * di, m)
+             for xi, di, m in zip(x, d, manifolds, strict=True)]
+        f = cost_fn(y)
+        print(f"      [Armijo-Increase Trial] bt_iter = {bt} | t = {t:.6e} | cost = {f:.6e} (target <= {1.01 * f0:.6e})")
+        if f <= 1.01 * f0:
+            print("Attention: allowing for cost function to increase by up to 1 percent")
             return t, y, f, rgrad_fn(y)
         t *= 0.5
     return None
@@ -319,6 +339,7 @@ class LBFGSDirection:
 def riemannian_optimize(
     cost_fn, rgrad_fn, x0, manifolds, direction,
     max_iter=200, gtol=1e-10, ftol=1e-9, callback=None,
+    allow_increase=False,
 ):
     r"""Generic first-order Riemannian optimizer on a product manifold.
 
@@ -357,12 +378,24 @@ def riemannian_optimize(
             d = [-gk for gk in g]
             direction.reset()
 
-        # Strong-Wolfe line search, Armijo backtracking as the fallback; both
-        # return the new point with its cost and Riemannian gradient.
-        ls = strong_wolfe_line_search(cost_fn, rgrad_fn, xs, d, manifolds, fval, g)
-        if ls is None:
-            ls = _armijo_backtracking(cost_fn, rgrad_fn, xs, d, manifolds, fval, g)
+        # For fixed-step optimizers (Adam, SGD), skip line search and take the proposed direction directly (t=1.0)
+        if hasattr(direction, "lr"):
+            t = 1.0
+            xs_new = [retract(xi, t * di, m) for xi, di, m in zip(xs, d, manifolds, strict=True)]
+            f_new = cost_fn(xs_new)
+            g_new = rgrad_fn(xs_new)
+            ls = (t, xs_new, f_new, g_new)
+        else:
+            # Strong-Wolfe line search, Armijo backtracking as the fallback; both
+            # return the new point with its cost and Riemannian gradient.
+            ls = strong_wolfe_line_search(cost_fn, rgrad_fn, xs, d, manifolds, fval, g)
+            if ls is None:
+                ls = _armijo_backtracking(cost_fn, rgrad_fn, xs, d, manifolds, fval, g)
+            if ls is None and allow_increase:
+                ls = _armijo_backtracking_increase(cost_fn, rgrad_fn, xs, d, manifolds, fval, g)
+
         if ls is None:  # both line searches failed -> stop
+            print("    [LineSearch Failed] Line search failed completely. Stopping optimization.")
             break
         t, xs_new, f_new, g_new = ls
 
@@ -374,7 +407,7 @@ def riemannian_optimize(
             best_f = f_new
         if callback is not None:
             callback(it, fval, gnorm)
-        if fprev - fval <= ftol * max(abs(fprev), 1.0):
+        if 0.0 <= fprev - fval <= ftol * max(abs(fprev), 1.0):
             break
         fprev = fval
 
@@ -383,7 +416,7 @@ def riemannian_optimize(
 
 def riemannian_lbfgs(
     cost_fn, rgrad_fn, x0, manifolds, max_iter=200, history_size=100,
-    gtol=1e-10, ftol=1e-9, callback=None,
+    gtol=1e-10, ftol=1e-9, callback=None, allow_increase=False,
 ):
     r"""Riemannian L-BFGS: :func:`riemannian_optimize` with an
     :class:`LBFGSDirection` (vector-transported curvature memory).
@@ -393,4 +426,5 @@ def riemannian_lbfgs(
     return riemannian_optimize(
         cost_fn, rgrad_fn, x0, manifolds, LBFGSDirection(history_size),
         max_iter=max_iter, gtol=gtol, ftol=ftol, callback=callback,
+        allow_increase=allow_increase,
     )

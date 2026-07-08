@@ -15,6 +15,7 @@ def train(
     tol: float = 1e-10,
     n_restarts: int = 0,
     scheduler_creator: Callable[[Any], Any] | None = None,
+    allow_increase: bool = False,
 ) -> InferenceModule:
     r"""
     Train an :class:`InferenceModule` by minimizing its cost using the module's
@@ -45,6 +46,7 @@ def train(
     :param n_restarts: number of optimizer restarts when the loss stalls
     :param scheduler_creator: (torch backend only) callable mapping an optimizer
         to a learning-rate scheduler; ``None`` for no scheduling
+    :param allow_increase: allow line search to accept steps where cost increases
     :returns: the trained model
     """
     manifolds = {
@@ -58,7 +60,7 @@ def train(
     if get_backend().is_numpy:
         return _train_numpy(
             model, manifolds, n_epochs, lr, optimizer_type,
-            print_every, tol, n_restarts,
+            print_every, tol, n_restarts, allow_increase,
         )
     return _train_torch(
         model, manifolds, n_epochs, lr, optimizer_type,
@@ -72,6 +74,7 @@ def train(
 
 def _train_numpy(
     model, manifolds, n_epochs, lr, optimizer_type, print_every, tol, n_restarts,
+    allow_increase,
 ):
     import numpy as np
 
@@ -167,6 +170,7 @@ def _train_numpy(
             cost_fn, rgrad_fn, xs0, mlist, make_direction(),
             max_iter=n_epochs, gtol=tol,
             ftol=max(tol, 1e-12), callback=progress,
+            allow_increase=allow_increase,
         )
         if fk < best_f:
             best_xs, best_f = xk, fk

@@ -20,7 +20,7 @@ rank, world_size = mpi_rank_size()
 
 traj_path = "./trajectories/"
 models_dir = "./models/"
-r = 50  # reduced dimension
+r = 30  # reduced dimension
 poly_comp = [1, 2]
 
 # Initialization model for GAS-NiTROM: "galerkin", "gas_opinf", or "nitrom".
@@ -173,8 +173,8 @@ printr(f"initial cost: {gcost(nitrom):.6e}")
 
 t0 = time.perf_counter()
 
-# Loop percent_time_length from 5% to 50% in steps of 5%
-percents = np.arange(0.05, 0.51, 0.05)
+# Loop percent_time_length from 5% to 100% in steps of 5%
+percents = np.arange(0.05, 1.05, 0.05)
 for p_idx, percent in enumerate(percents):
     printr(f"\n--- NiTROM Stage {p_idx + 1}/{len(percents)} (Time length: {percent * 100:.1f}%) ---")
     td_slice = TrainingData(
@@ -277,7 +277,7 @@ printr(f"initial cost: {gcost(gas_nitrom):.6e}")
 
 t0_gas = time.perf_counter()
 
-# Loop percent_time_length from 5% to 50% in steps of 5%
+# Loop percent_time_length from 5% to 100% in steps of 5%
 for p_idx, percent in enumerate(percents):
     printr(f"\n--- GAS-NiTROM Stage {p_idx + 1}/{len(percents)} (Time length: {percent * 100:.1f}%) ---")
     td_slice = TrainingData(

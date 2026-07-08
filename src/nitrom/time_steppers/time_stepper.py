@@ -95,7 +95,8 @@ def _newton_solve(
             res_norm = bkend.vector_norm(F_val)
         else:
             res_norm = bkend.vector_norm(F_val, axis=-1).max()
-        if float(res_norm) < newton_tol:
+        res_val = float(res_norm.detach()) if hasattr(res_norm, "detach") else float(res_norm)
+        if res_val < newton_tol:
             break
 
         J_f = _jacobian_f(f, t_eval, y, args, kwargs, bkend)
@@ -103,9 +104,10 @@ def _newton_solve(
         delta_y = bkend.solve(J_F, -F_val)
         y = y + delta_y
     else:
+        res_val = float(res_norm.detach()) if hasattr(res_norm, "detach") else float(res_norm)
         raise RuntimeError(
             f"Newton solver failed to converge within {newton_max_iter} "
-            f"iterations. Final residual norm: {float(res_norm):.2e}"
+            f"iterations. Final residual norm: {res_val:.2e}"
         )
 
     return y
@@ -233,3 +235,124 @@ def solve_ivp(
                 X[:, i // save_every] = x
 
     return interp_quadratic(t_eval, tsave, X)
+
+
+def solve_adjoint_ivp_discrete(
+    f: Callable[..., Any],
+    vjp_z: Callable[..., Any],
+    vjp_theta: Callable[..., Any],
+    Zint: Any,
+    sub_t: Any,
+    h: float,
+    lam_init: Any,
+    method: Literal["rk4", "rk2"] = "rk4",
+    *args,
+    **kwargs,
+) -> tuple[Any, list[Any]]:
+    r"""
+    Propagate the adjoint state backward in time through the discrete RK solver
+    stages and accumulate the parameter VJPs.
+
+    :param f: right-hand side evaluate_rhs: ``(t, z, *args, **kwargs) -> dz``
+    :param vjp_z: VJP w.r.t state (evaluate_adjoint_rhs): ``(t, w, z, *args, **kwargs) -> dz_vjp``
+    :param vjp_theta: VJP w.r.t parameters: ``(z, w, t=t, *args, **kwargs) -> list_of_theta_vjps``
+    :param Zint: forward trajectory states over the sub-grid: ``(B, n, n_substeps + 1)``
+    :param sub_t: time values of the sub-grid: ``(n_substeps + 1,)``
+    :param h: step size
+    :param lam_init: initial adjoint seed state: ``(B, n)``
+    :param method: ``"rk4"`` or ``"rk2"``
+    :returns: tuple containing the final adjoint state and the accumulated parameter gradients list
+    """
+    bkend = get_backend()
+    lam = bkend.copy(lam_init) if hasattr(lam_init, "copy") else lam_init * 1.0
+    
+    n_substeps = len(sub_t) - 1
+    param_grads = None
+    
+    for j in range(n_substeps - 1, -1, -1):
+        z_n = Zint[:, :, j]
+        t_n = float(sub_t[j])
+        
+        if method == "rk4":
+            k1 = f(t_n, z_n, *args, **kwargs)
+            k2 = f(t_n + h / 2.0, z_n + (h / 2.0) * k1, *args, **kwargs)
+            k3 = f(t_n + h / 2.0, z_n + (h / 2.0) * k2, *args, **kwargs)
+            
+            x4 = z_n + h * k3
+            x3 = z_n + (h / 2.0) * k2
+            x2 = z_n + (h / 2.0) * k1
+            x1 = z_n
+            
+            lam_x = bkend.copy(lam) if hasattr(lam, "copy") else lam * 1.0
+            w4 = lam * (h / 6.0)
+            w3 = lam * (h / 3.0)
+            w2 = lam * (h / 3.0)
+            w1 = lam * (h / 6.0)
+            
+            # Stage 4
+            dz4 = vjp_z(t_n + h, w4, x4, *args, **kwargs)
+            dtheta4 = vjp_theta(x4, w4, t=t_n + h, *args, **kwargs)
+            lam_x = lam_x + dz4
+            w3 = w3 + h * dz4
+            if param_grads is None:
+                param_grads = [bkend.zeros_like(p) for p in dtheta4]
+            for idx, g in enumerate(dtheta4):
+                param_grads[idx] = param_grads[idx] + g
+                
+            # Stage 3
+            dz3 = vjp_z(t_n + h / 2.0, w3, x3, *args, **kwargs)
+            dtheta3 = vjp_theta(x3, w3, t=t_n + h / 2.0, *args, **kwargs)
+            lam_x = lam_x + dz3
+            w2 = w2 + (h / 2.0) * dz3
+            for idx, g in enumerate(dtheta3):
+                param_grads[idx] = param_grads[idx] + g
+                
+            # Stage 2
+            dz2 = vjp_z(t_n + h / 2.0, w2, x2, *args, **kwargs)
+            dtheta2 = vjp_theta(x2, w2, t=t_n + h / 2.0, *args, **kwargs)
+            lam_x = lam_x + dz2
+            w1 = w1 + (h / 2.0) * dz2
+            for idx, g in enumerate(dtheta2):
+                param_grads[idx] = param_grads[idx] + g
+                
+            # Stage 1
+            dz1 = vjp_z(t_n, w1, x1, *args, **kwargs)
+            dtheta1 = vjp_theta(x1, w1, t=t_n, *args, **kwargs)
+            lam_x = lam_x + dz1
+            for idx, g in enumerate(dtheta1):
+                param_grads[idx] = param_grads[idx] + g
+                
+            lam = lam_x
+            
+        elif method == "rk2":
+            k1 = f(t_n, z_n, *args, **kwargs)
+            x2 = z_n + h * k1
+            x1 = z_n
+            
+            lam_x = bkend.copy(lam) if hasattr(lam, "copy") else lam * 1.0
+            w2 = lam * (h / 2.0)
+            w1 = lam * (h / 2.0)
+            
+            # Stage 2
+            dz2 = vjp_z(t_n + h, w2, x2, *args, **kwargs)
+            dtheta2 = vjp_theta(x2, w2, t=t_n + h, *args, **kwargs)
+            lam_x = lam_x + dz2
+            w1 = w1 + h * dz2
+            if param_grads is None:
+                param_grads = [bkend.zeros_like(p) for p in dtheta2]
+            for idx, g in enumerate(dtheta2):
+                param_grads[idx] = param_grads[idx] + g
+                
+            # Stage 1
+            dz1 = vjp_z(t_n, w1, x1, *args, **kwargs)
+            dtheta1 = vjp_theta(x1, w1, t=t_n, *args, **kwargs)
+            lam_x = lam_x + dz1
+            for idx, g in enumerate(dtheta1):
+                param_grads[idx] = param_grads[idx] + g
+                
+            lam = lam_x
+            
+        else:
+            raise NotImplementedError(f"Discrete adjoint not implemented for {method}")
+            
+    return lam, param_grads

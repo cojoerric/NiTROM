@@ -5,7 +5,7 @@ import numpy as np
 from nitrom.roms.param_registry import ParamRegistry
 from nitrom.training_data import TrainingData
 
-from ...time_steppers.time_stepper import solve_ivp
+from ...time_steppers.time_stepper import solve_ivp, solve_adjoint_ivp_discrete
 from ...utils import interp_quadratic
 from .base import InferenceModule
 
@@ -151,14 +151,6 @@ class NitromModule(InferenceModule):
         per_traj = bkend.sum(e * e, axis=(1, 2)) / self.weights.reshape(-1)
         return per_traj.sum()
 
-    def _vjp_rhs(self, z: Any, lam: Any, t: float) -> list:
-        """VJP of the latent RHS w.r.t. the model parameters (forwards forcing)."""
-        if getattr(self.model, "forcing_exists", False) and self.forcing_fns:
-            return self.model.vjp_evaluate_rhs(
-                z, lam, external_forcing=self.forcing_fns, t=t
-            )
-        return self.model.vjp_evaluate_rhs(z, lam)
-
     def gradient(self) -> list:
         r"""
         Analytic gradient of the cost w.r.t. the trainable parameters, in
@@ -214,10 +206,9 @@ class NitromModule(InferenceModule):
             # Decoder parameter gradient (vjp_decode sums over its batch).
             proj_grads = list(self.projection.vjp_decode(Z_flat, cw_flat))
 
-            # --- backward adjoint sweep ------------------------------------
+            # --- backward adjoint sweep (discrete adjoint) ------------------
             model_grads = [bkend.zeros_like(p) for p in self.model.get_params()]
             lam = bkend.zeros((ntraj, r), device=dev, dtype=dtype)
-            xi, wq = self._gl_nodes, self._gl_weights
 
             for k in range(nt - 1, 0, -1):
                 # Inject the measurement source at snapshot k.
@@ -226,65 +217,28 @@ class NitromModule(InferenceModule):
                 # Re-integrate the base flow over [t_{k-1}, t_k].
                 t0i, tfi = float(time[k - 1]), float(time[k])
                 delta = tfi - t0i
-                a = 0.5 * delta
+                h = delta / self.n_substeps
                 sub_t = bkend.linspace(
                     t0i, tfi, self.n_substeps + 1, device=dev, dtype=dtype
                 )
                 Zint = solve_ivp(
                     self.model.evaluate_rhs, Z[:, :, k - 1], t0i, tfi,
-                    delta / self.n_substeps, sub_t, self.time_stepper,
+                    h, sub_t, self.time_stepper,
                     external_forcing=ef,
                 )  # (ntraj, r, n_substeps + 1)
-
-                # Adjoint in reversed time tau in [0, delta] (physical time
-                # t = tfi - tau): d(lam)/d(tau) = J_f(Z(t))^T lam.
-                def adj_rhs(tau, lam_, _Zint=Zint, _sub_t=sub_t, _tfi=tfi):
-                    phys_t = _tfi - tau
-                    tq = bkend.atleast_1d(
-                        bkend.asarray(phys_t, device=dev, dtype=dtype)
-                    )
-                    Z_t = interp_quadratic(tq, _sub_t, _Zint)[..., 0]  # (ntraj, r)
-                    return self.model.evaluate_adjoint_rhs(float(phys_t), lam_, Z_t)
-
-                # Integrate the adjoint onto the Gauss-Legendre nodes (reversed
-                # time), plus the interval end for the carry-forward.
-                tau_nodes = a * (1.0 - xi)  # (n_leggauss,)
-                order = bkend.argsort(tau_nodes)
-                tau_eval = bkend.concatenate(
-                    [tau_nodes[order], bkend.asarray([delta], device=dev, dtype=dtype)]
+                
+                # Propagate adjoint and accumulate model grads
+                lam, step_grads = solve_adjoint_ivp_discrete(
+                    self.model.evaluate_rhs,
+                    self.model.evaluate_adjoint_rhs,
+                    self.model.vjp_evaluate_rhs,
+                    Zint, sub_t, h, lam,
+                    method=self.time_stepper,
+                    external_forcing=ef,
                 )
-                Lam_sol = solve_ivp(
-                    adj_rhs, lam, 0.0, delta, delta / self.n_substeps, tau_eval,
-                    self.time_stepper,
-                )  # (ntraj, r, n_leggauss + 1)
-
-                # Adjoint at the GL nodes (undo the sort); carry lambda(t_{k-1}).
-                Lam_nodes = bkend.empty(
-                    (ntraj, r, self.n_leggauss), device=dev, dtype=dtype
-                )
-                Lam_nodes[..., order] = Lam_sol[..., : self.n_leggauss]
-                lam = Lam_sol[..., -1]
-
-                # Base flow at the physical GL nodes.
-                t_gl = 0.5 * (tfi + t0i) + a * xi  # (n_leggauss,)
-                Z_nodes = interp_quadratic(t_gl, sub_t, Zint)  # (ntraj, r, n_leggauss)
-
-                # Gauss-Legendre quadrature of the model-parameter integral.
-                # Fold the quadrature weight a * w_i into the adjoint seed.
-                Lam_w = Lam_nodes * (a * wq).reshape(1, 1, -1)
-                if getattr(self.model, "forcing_exists", False) and self.forcing_fns:
-                    # Forcing makes the VJP depend on the per-node time.
-                    for i in range(self.n_leggauss):
-                        g = self._vjp_rhs(
-                            Z_nodes[..., i], Lam_w[..., i], float(t_gl[i])
-                        )
-                        for idx in range(len(model_grads)):
-                            model_grads[idx] = model_grads[idx] + g[idx]
-                else:
-                    # Flatten (trajectory, node) and reduce in one VJP call.
-                    Zf = bkend.permute(Z_nodes, (0, 2, 1)).reshape(-1, r)
-                    Lf = bkend.permute(Lam_w, (0, 2, 1)).reshape(-1, r)
-                    for idx, g in enumerate(self.model.vjp_evaluate_rhs(Zf, Lf)):
+                
+                if step_grads is not None:
+                    for idx, g in enumerate(step_grads):
                         model_grads[idx] = model_grads[idx] + g
 
             # Measurement at t_0, then encoder gradient seeded with lambda(0).

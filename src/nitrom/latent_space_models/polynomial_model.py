@@ -283,7 +283,7 @@ class PolynomialModel(Model):
         """
         grads = []
 
-        f_fun_lst = kwargs.get("external_forcing")
+        f_fun_lst = kwargs.get("external_forcing") if self.forcing_exists else None
         t = kwargs.get("t", 0.0)
         bkend = self.backend
 
