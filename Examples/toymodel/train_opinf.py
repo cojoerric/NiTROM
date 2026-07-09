@@ -30,7 +30,7 @@ def gcost(m):
     return mpi_allreduce_scalar(c) if world_size > 1 else c
 
 traj_path = "./trajectories/"
-models_dir = "./models_discrete_adjoint/"
+models_dir = "./models_continuous_adjoint/"
 n_traj = 4
 r = 2  # reduced dimension
 poly_comp = [1, 2]

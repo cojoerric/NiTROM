@@ -109,6 +109,9 @@ class GasPolynomialModel(Model):
         if forcing_exists and B_fixed is not None:
             self.B = bkend.asarray(B_fixed, dtype=self.dtype, device=self.device)
 
+        # Precompute inverses and products for Q, R, and S
+        self._precompute_inverses()
+
         # Assemble physical tensors and create the inner PolynomialModel
         tensors = self.assemble_gas_tensors()
         self.model = PolynomialModel(
@@ -120,6 +123,19 @@ class GasPolynomialModel(Model):
             tensors=tensors,
             forcing_config=forcing_config,
         )
+
+    def _precompute_inverses(self) -> None:
+        """Precompute and cache inverses and products for Q and R."""
+        bkend = self.backend
+        if hasattr(self, "Q"):
+            self._Qinv = bkend.inv(self.Q)
+            self._Qtil = self._Qinv @ self._Qinv.T
+        if hasattr(self, "R"):
+            self._Rinv = bkend.inv(self.R)
+            self._Rtil = self._Rinv @ self._Rinv.T
+        if hasattr(self, "S"):
+            # S_diff_jik = S_jik - S_ijk
+            self._S_diff = self.S - bkend.permute(self.S, (1, 0, 2))
 
     def get_params(self) -> list[Any]:
         """Return the current GAS parameter tensors as a list."""
@@ -137,13 +153,11 @@ class GasPolynomialModel(Model):
         bkend = self.backend
         tensors = [None] * len(self.poly_comp)
 
-        Qinv = bkend.inv(self.Q)
-        Qtil = Qinv @ Qinv.T
+        Qtil = self._Qtil
 
         if 1 in self.poly_comp:
             idx = self.poly_comp.index(1)
-            Rinv = bkend.inv(self.R)
-            tensors[idx] = ((self.K - self.K.T) - Rinv @ Rinv.T) @ Qtil
+            tensors[idx] = ((self.K - self.K.T) - self._Rtil) @ Qtil
 
         if 2 in self.poly_comp:
             idx = self.poly_comp.index(2)
@@ -168,6 +182,7 @@ class GasPolynomialModel(Model):
         """
         for name, tensor in zip(self.param_names, params, strict=True):
             setattr(self, name, tensor)
+        self._precompute_inverses()
         self.model.update_params(self.assemble_gas_tensors())
 
     def retract_general_tensors_to_gas_tensors(
@@ -431,39 +446,36 @@ class GasPolynomialModel(Model):
         grad_H = inner_grads[self.poly_comp.index(2)] if 2 in self.poly_comp else None
         grad_B = inner_grads[-1] if self.forcing_exists else None
 
-        Qinv = bkend.inv(self.Q)
-        Qtil = Qinv @ Qinv.T
+        Qtil = self._Qtil
 
         grads = []
 
         # grad_K, grad_R (from linear term A = ((K - K^T) - R^{-1} R^{-T}) @ Qtil)
-        Rinv = bkend.inv(self.R) if 1 in self.poly_comp else None
         if 1 in self.poly_comp:
             grad_A_Qtil = grad_A @ Qtil
             sym = grad_A_Qtil + grad_A_Qtil.T
             grad_K = grad_A_Qtil - grad_A_Qtil.T
             # M = R^{-1} R^{-T}; chain through M = P P^T and P = R^{-1}.
-            grad_R = Rinv.T @ sym @ Rinv @ Rinv.T
+            grad_R = self._Rinv.T @ sym @ self._Rinv @ self._Rinv.T
             grads.extend([grad_K, grad_R])
 
         # grad_Q, grad_S from H_{ijk} = (S_{ilk} - S_{lik}) Qtil_{lj}
         if 2 in self.poly_comp:
             # grad_Qtil from linear term: A_pre^T @ grad_A
             if grad_A is not None:
-                A_pre = (self.K - self.K.T) - Rinv @ Rinv.T
+                A_pre = (self.K - self.K.T) - self._Rtil
                 grad_Qtil = A_pre.T @ grad_A
             else:
                 grad_Qtil = bkend.zeros_like(Qtil)
             # grad_Qtil_{lj} from quadratic: Σ_{ik} grad_H_{ijk} (S_{ilk} - S_{lik})
-            grad_Qtil += bkend.einsum(
-                "jik,jlk->il", self.S, grad_H
-            ) - bkend.einsum("ijk,jlk->il", self.S, grad_H)
+            grad_Qtil += bkend.einsum("jik,jlk->il", self._S_diff, grad_H)
+
             # grad_Q from Qtil = Q^{-1} Q^{-T}
-            grad_Q = -(Qinv.T @ grad_Qtil @ Qtil + Qinv.T @ grad_Qtil.T @ Qtil)
+            grad_Q = -(self._Qinv.T @ (grad_Qtil @ Qtil) + self._Qinv.T @ (grad_Qtil.T @ Qtil))
 
             # grad_S_{abc} = Σ_j grad_H_{ajc} Qtil_{bj} - Σ_j grad_H_{bjc} Qtil_{aj}
             grad_S = bkend.einsum("ijk,jl->ilk", grad_H, Qtil) - bkend.einsum(
-                "jl,ilk->jik", Qtil, grad_H
+                "ljk,ij->ilk", grad_H, Qtil
             )
             grads.extend([grad_Q, grad_S])
 

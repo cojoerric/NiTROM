@@ -56,7 +56,7 @@ B_fom = np.ones((Phi.shape[0], 1), dtype=dtype)
 B_r = projection.encode(B_fom.T).T  # fixed reduced input operator, (r, m)
 forcing_config = {"forcing_exists": True, "B": B_r, "m": B_fom.shape[1]}
 
-models_dir = "./models_discrete/"
+models_dir = "./models_discrete_adjoint/"
 
 
 def save_checkpoint(tensors, kind, path, gas_params=None) -> None:

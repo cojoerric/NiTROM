@@ -103,7 +103,18 @@ class NitromModule(InferenceModule):
 
     def _sync_to_registry(self) -> None:
         """Push the current parameter values into the model and projection."""
-        self.registry.scatter(self.parameter_list())
+        if not self._check_sync():
+            self.registry.scatter(self.parameter_list())
+
+    def _check_sync(self) -> bool:
+        """Check if the current parameters are synchronized with the registry."""
+        try:
+            for name, value in zip(self.registry.names, self.parameter_list()):
+                if not self.backend.allclose(getattr(self.registry, name), value):
+                    return False
+            return True
+        except AttributeError:
+            return False
 
     def _decode_trajectories(self, Z: Any) -> Any:
         r"""

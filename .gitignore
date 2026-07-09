@@ -173,6 +173,7 @@ cython_debug/
 **/figures/
 
 *.png
+*.eps
 *.pdf
 *.ruff_cache/
 *.pytest_cache/

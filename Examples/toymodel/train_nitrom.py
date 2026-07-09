@@ -21,7 +21,8 @@ dtype = np.float64
 rank, world_size = mpi_rank_size()
 
 traj_path = "./trajectories/"
-models_dir = "./models_discrete_adjoint/"
+adjoint_method = 'discrete'
+models_dir = f"./models_{adjoint_method}_adjoint/"
 n_traj = 4
 r = 2  # reduced dimension
 poly_comp = [1, 2]
@@ -121,13 +122,13 @@ nitrom_model = PolynomialModel(
     r, poly_comp, dtype=dtype, forcing_config=forcing_config, tensors=(A2r, A3r, Br),
 )
 registry = ParamRegistry(nitrom_model, projection)
-nitrom = NitromModule(training_data, registry, fom=fom, n_substeps=15, adjoint_method='discrete')
+nitrom = NitromModule(training_data, registry, fom=fom, n_substeps=15, adjoint_method=adjoint_method)
 nitrom.set_unlearnable("B")  # B = Phi^T B_fom is fixed, not trained
 nitrom.set_manifold_types(["Phi", "Psi"], ["grassmann", "stiefel"])
 
 printr(f"initial cost: {gcost(nitrom):.6e}")
 t0 = time.perf_counter()
-train(nitrom, n_epochs=200, lr=1.0, optimizer_type="lbfgs", print_every=1, tol=1e-14)
+train(nitrom, n_epochs=400, lr=1.0, optimizer_type="lbfgs", print_every=1, tol=1e-14)
 nitrom_time = time.perf_counter() - t0
 printr(f"training time: {nitrom_time:.4f} s")
 printr(f"final cost:   {gcost(nitrom):.6e}")
@@ -183,13 +184,13 @@ gas_nitrom_model = GasPolynomialModel(
 # Start the projection from the loaded bases.
 projection_gas = LinearProjection([init_Phi, init_Psi])
 registry_gas = ParamRegistry(gas_nitrom_model, projection_gas)
-gas_nitrom = NitromModule(training_data, registry_gas, fom=fom, n_substeps=15, adjoint_method='discrete')
+gas_nitrom = NitromModule(training_data, registry_gas, fom=fom, n_substeps=15, adjoint_method=adjoint_method)
 gas_nitrom.set_unlearnable("B")
 gas_nitrom.set_manifold_types(["Phi", "Psi"], ["grassmann", "stiefel"])
 
 printr(f"initial cost: {gcost(gas_nitrom):.6e}")
 t0_gas = time.perf_counter()
-train(gas_nitrom, n_epochs=200, lr=1.0, optimizer_type="lbfgs", print_every=1, tol=1e-14)
+train(gas_nitrom, n_epochs=400, lr=1.0, optimizer_type="lbfgs", print_every=1, tol=1e-14)
 gas_nitrom_time = time.perf_counter() - t0_gas
 printr(f"training time: {gas_nitrom_time:.4f} s")
 printr(f"final cost:   {gcost(gas_nitrom):.6e}")

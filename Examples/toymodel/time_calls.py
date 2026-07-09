@@ -34,6 +34,8 @@ pool = TrainingPool(
     fname_derivs=traj_path + "deriv_%03d.npy",
 )
 
+n_snap = pool.n_snapshots
+
 # Compute POD basis
 U, _, _ = compute_POD(pool, normalize=True)
 Phi = U[:, :r]  # (N, r)
@@ -78,14 +80,14 @@ nitrom_model = PolynomialModel(
     r, poly_comp, dtype=dtype, forcing_config=forcing_config, tensors=(A2r, A3r, Br),
 )
 registry = ParamRegistry(nitrom_model, projection)
-nitrom = NitromModule(training_data, registry, fom=fom, n_substeps=10)
+nitrom = NitromModule(training_data, registry, fom=fom, n_substeps=15, adjoint_method='discrete')
 
 # 3) Setup GasNiTROM
 gas_nitrom_model = GasPolynomialModel(
     r, poly_comp, dtype=dtype, gas_params=gas_init, forcing_config=forcing_config,
 )
 registry_gas = ParamRegistry(gas_nitrom_model, projection)
-gasnitrom = NitromModule(training_data, registry_gas, fom=fom, n_substeps=15)
+gasnitrom = NitromModule(training_data, registry_gas, fom=fom, n_substeps=15, adjoint_method='discrete')
 
 
 def time_module(module, name, num_calls=50):
@@ -97,15 +99,15 @@ def time_module(module, name, num_calls=50):
     t0 = time.perf_counter()
     for _ in range(num_calls):
         _ = module()
-    t_cost = (time.perf_counter() - t0) / num_calls
+    t_cost = (time.perf_counter() - t0) / num_calls / n_traj / n_snap
 
     # Time gradient evaluations
     t0 = time.perf_counter()
     for _ in range(num_calls):
         _ = module.gradient()
-    t_grad = (time.perf_counter() - t0) / num_calls
+    t_grad = (time.perf_counter() - t0) / num_calls / n_traj / n_snap
 
-    print(f"{name:<12} | {t_cost:12.6f} | {t_grad:12.6f}")
+    print(f"{name:<12} | {t_cost:12.6e} | {t_grad:12.6e}")
     return t_cost, t_grad
 
 

@@ -61,11 +61,11 @@ def add_training_window(ax, x_end=10.0):
         bbox=dict(facecolor="white", edgecolor="#6f6f6f", linewidth=0.6, alpha=0.95, boxstyle="round,pad=0.25"),
     )
 
-
+adjoint_method = 'discrete'
 def save_figure(fig, stem):
-    os.makedirs("figures_discrete_adjoint", exist_ok=True)
-    fig.savefig(f"figures_discrete_adjoint/{stem}.eps", format="eps")
-    fig.savefig(f"figures_discrete_adjoint/{stem}.png", format="png")
+    os.makedirs(f"figures_{adjoint_method}_adjoint", exist_ok=True)
+    fig.savefig(f"figures_{adjoint_method}_adjoint/{stem}.eps", format="eps")
+    fig.savefig(f"figures_{adjoint_method}_adjoint/{stem}.png", format="png")
     plt.close(fig)
 
 
@@ -81,7 +81,7 @@ C = np.ones((1, n), dtype=dtype)
 fom = fom_class.full_order_model(A2, A3, B, C, dtype=dtype)
 
 # Load the trained ROMs
-models_dir = "./models_discrete_adjoint/"
+models_dir = f"./models_{adjoint_method}_adjoint/"
 
 
 def load_rom(fname):
@@ -276,7 +276,7 @@ style_axes(ax, xlabel='Time $t$', ylabel='$y(t)$', xlim=(0.0, 30.0), ylim=(-1.0,
 save_figure(fig, 'response_toymodel_low_30')
 
 # --- 3) Dynamic Response (High Input) ---
-u_fun_high = lambda t: np.array([0.65 * (np.sin(t) + np.cos(2.0 * t))], dtype=dtype)
+u_fun_high = lambda t: np.array([0.75 * (np.sin(t) + np.cos(2.0 * t))], dtype=dtype)
 fom_forcing_high = lambda t: B[:, 0] * (0.65 * (np.sin(t) + np.cos(2.0 * t)))
 
 sol_fom = solve_ivp(fom.evaluate_fom_dynamics, x0, t0, tf, dt, t_eval, "rk4", u=fom_forcing_high)
@@ -357,18 +357,31 @@ with open(os.path.join(models_dir, "nitrom_history.pkl"), "rb") as f:
 with open(os.path.join(models_dir, "gas_nitrom_history.pkl"), "rb") as f:
     hist_gas_nitrom = pickle.load(f)
 
+# Timings
+time_gas_opinf = hist_gas_opinf["time"]
+time_nitrom = hist_nitrom["time"]
+time_gas_nitrom = hist_gas_nitrom["time"]
+print("GasOpInf time:", time_gas_opinf)
+print("NiTROM time:", time_nitrom)
+print("GasNiTROM time:", time_gas_nitrom)
+
 # Cost vs Iteration Plot
 fig, ax1 = make_figure()
 ax2 = ax1.twinx()
 
 # Plot NiTROM costs on left y-axis
-l1 = ax1.semilogy(hist_nitrom["iters"], hist_nitrom["loss"], label='NiTROM', color='darkgreen', linestyle=STYLES["gas"])
+l1 = ax1.semilogy(hist_nitrom["iters"], hist_nitrom["loss"], label='NiTROM', color=COLORS["nitrom"], linestyle=STYLES["notgas"])
 l2 = ax1.semilogy(hist_gas_nitrom["iters"], hist_gas_nitrom["loss"], label='GasNiTROM', color=COLORS["nitrom"], linestyle=STYLES["gas"])
 style_axes(ax1, xlabel='Iteration', ylabel=r'$J_{\text{NiTROM}}$', log_y=True)
+ax1.yaxis.label.set_color(COLORS["nitrom"])
+ax1.tick_params(axis='y', colors=COLORS["nitrom"])
+ax1.spines['left'].set_color(COLORS["nitrom"])
 
 # Plot GasOpInf cost on right y-axis
 l3 = ax2.semilogy(hist_gas_opinf["iters"], hist_gas_opinf["loss"], label='GasOpInf', color=COLORS["opinf"], linestyle=STYLES["gas"])
-ax2.set_ylabel(r'$J_{\text{OpInf}}$')
+ax2.set_ylabel(r'$J_{\text{OpInf}}$', color=COLORS["opinf"])
+ax2.tick_params(axis='y', colors=COLORS["opinf"])
+ax2.spines['right'].set_color(COLORS["opinf"])
 ax2.set_yscale("log")
 ax2.yaxis.set_major_locator(LogLocator(base=10.0))
 ax2.yaxis.set_minor_locator(LogLocator(base=10.0, subs=np.arange(2, 10) * 0.1))
@@ -383,11 +396,11 @@ save_figure(fig, 'cost_history')
 
 # Gradient Norm vs Iteration Plot
 fig, ax = make_figure()
-ax.semilogy(hist_nitrom["iters"], hist_nitrom["gradnorm"], label='NiTROM', color='darkgreen', linestyle=STYLES["gas"], linewidth=1.0)
+ax.semilogy(hist_nitrom["iters"], hist_nitrom["gradnorm"], label='NiTROM', color=COLORS["nitrom"], linestyle=STYLES["notgas"], linewidth=1.0)
 ax.semilogy(hist_gas_nitrom["iters"], hist_gas_nitrom["gradnorm"], label='GasNiTROM', color=COLORS["nitrom"], linestyle=STYLES["gas"], linewidth=1.0)
 ax.semilogy(hist_gas_opinf["iters"], hist_gas_opinf["gradnorm"], label='GasOpInf', color=COLORS["opinf"], linestyle=STYLES["gas"], linewidth=1.0)
 style_axes(ax, xlabel='Iteration', ylabel='Gradient Norm', log_y=True)
-ax.legend(loc='upper right')
+ax.legend(loc='lower right')
 
 save_figure(fig, 'gradnorm_history')
 
