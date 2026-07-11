@@ -105,7 +105,7 @@ psi_tot = phi_pre @ Phi
 (A2r, A3r), _ = fom.assemble_petrov_galerkin_tensors(phi_tot, psi_tot, B, [0,0,1,0,0,0,0,0])
 
 # Sweep range
-regs = np.logspace(-6, -1, 50)
+regs = np.logspace(5, 8, 50)
 
 best_opinf_reg = None
 best_opinf_cost = float("inf")
@@ -153,7 +153,7 @@ for reg in regs:
     gas = OpInfModule(training_data, gas_model, projection, reg=reg)
 
     # Train GAS-OpInf silently
-    train(gas, n_epochs=epochs, lr=1.0, optimizer_type="lbfgs", print_every=1, tol=1e-10)
+    train(gas, n_epochs=epochs, lr=1.0, optimizer_type="lbfgs", print_every=100, tol=1e-10)
 
     # Save the current optimized parameters for the next iteration (warm-start)
     gas_init = [np.copy(np.asarray(t)) for t in gas_model.get_params()]

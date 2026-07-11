@@ -74,7 +74,6 @@ Phi = U[:, :r]  # (200, r)
 projection = LinearProjection([Phi, Phi])  # orthogonal (Psi = Phi)
 
 models_dir = "./models/"
-reg = 1e-4  # Default regularization parameter
 
 
 def save_checkpoint(tensors, kind, path, gas_params=None) -> None:
@@ -109,7 +108,7 @@ psi_tot = phi_pre @ Phi
 # %% 1) Solve standard OpInf analytically
 printr("\n=== OpInf ===")
 opinf_model = PolynomialModel(r, poly_comp, dtype=dtype)
-opinf = OpInfModule(training_data, opinf_model, projection, reg=reg)
+opinf = OpInfModule(training_data, opinf_model, projection, reg=3.906940e-01)
 solve_opinf(opinf)
 
 if rank == 0:
@@ -129,10 +128,10 @@ gas_init = [*seed.get_params()]
 gas_model = GasPolynomialModel(
     r, poly_comp, dtype=dtype, gas_params=gas_init,
 )
-gas = OpInfModule(training_data, gas_model, projection, reg=reg)
+gas = OpInfModule(training_data, gas_model, projection, reg=5.428675e-05)
 
 t0 = time.perf_counter()
-train(gas, n_epochs=5000, lr=1.0, optimizer_type="lbfgs", print_every=1, tol=1e-10)
+train(gas, n_epochs=10000, lr=1.0, optimizer_type="lbfgs", print_every=250, tol=1e-14)
 gas_opinf_time = time.perf_counter() - t0
 printr(f"training time: {gas_opinf_time:.4f} s")
 
