@@ -107,3 +107,30 @@ class Model(metaclass=abc.ABCMeta):
         :rtype: list
         """
         ...
+
+    def inner_params(self) -> list[Any]:
+        """
+        Return the inner parameter tensors for which `vjp_evaluate_rhs` 
+        directly computes gradients. By default, this is `self.get_params()`.
+        
+        :rtype: list
+        """
+        return self.get_params()
+
+    def project_inner_gradients(self, inner_grads: list[Any]) -> list[Any]:
+        """
+        Project accumulated inner gradients to the actual model parameters.
+        By default, this is the identity mapping.
+        
+        :param inner_grads: gradients with respect to `inner_params()`
+        :rtype: list
+        """
+        return inner_grads
+
+    def inner_vjp_evaluate_rhs(self, z: Any, v: Any, *args, **kwargs) -> list:
+        """
+        VJP of the RHS with respect to the inner parameter tensors.
+        For models without a two-level parameterization, this is identical 
+        to `vjp_evaluate_rhs`.
+        """
+        return self.vjp_evaluate_rhs(z, v, *args, **kwargs)

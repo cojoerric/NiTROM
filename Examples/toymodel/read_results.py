@@ -15,7 +15,7 @@ set_backend("numpy")
 set_plot_style()
 
 dtype = np.float64
-models_dir = "./models/"
+models_dir = "./models_continuous_adjoint/"
 n = 3  # FOM dimension
 
 # %% Full-order model operators (same toy model as generate_data.py)
@@ -55,9 +55,9 @@ def load_rom(fname):
 
 models = {}
 available_models = [
-    (r"POD-Galerkin", "galerkin_model.pkl", COLORS["galerkin"], "solid"),
-    (r"OpInf", "opinf_model.pkl", COLORS["opinf"], "dotted"),
-    (r"GAS-OpInf", "gas_opinf_model.pkl", COLORS["gas"], "dashed"),
+    (r"POD-Galerkin", "galerkin_model.pkl", "red", "solid"),
+    (r"OpInf", "opinf_model.pkl", "blue", "dotted"),
+    (r"GAS-OpInf", "gas_opinf_model.pkl", "green", "dashed"),
     (r"NiTROM", "nitrom_model.pkl", "#e78ac3", "dashdot"),
     (r"GAS-NiTROM", "gas_nitrom_model.pkl", "#a6d854", (0, (3, 1, 1, 1))),
 ]

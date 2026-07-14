@@ -25,6 +25,8 @@ FIG_WIDTH = 3.4
 FIG_WIDTH_WIDE = 6.8
 FIG_HEIGHT = 2.6
 TRAINING_SHADE = "#ececec"
+rtol = 1e-4
+atol = 1e-8
 
 
 def make_figure(*, wide=False):
@@ -84,6 +86,7 @@ Re = 8300
 
 n = 400
 dt = 1.0/n
+dt_orig = dt
 
 # Setup the flow & FOM
 flow = classes_cavity.flow_class(Lx, Ly, Nx, Ny, Re)
@@ -112,6 +115,7 @@ else:
 
 phi_pre = np.load(traj_path + "phi_pre.npy")  # (19700, 200)
 n_traj = len(amps)
+n = phi_pre.shape[-1]
 
 # Load the trajectories into a TrainingPool
 pool = TrainingPool(
@@ -156,7 +160,6 @@ proj_nit = LinearProjection([Phi_nit, Psi_nit])
 
 rom_nit_gs, Phi_nit_gs, Psi_nit_gs = load_rom("gas_nitrom_model.pkl")
 proj_nit_gs = LinearProjection([Phi_nit_gs, Psi_nit_gs])
-print(len(rom_nit_gs.get_params()))
 
 r = rom_pod._r
 
@@ -188,31 +191,31 @@ for k in range(n_traj):
     z0 = Psi_pod.T @ pool.X[k, :, 0]
 
     # POD-Gal.
-    sol_pod_r = solve_ivp(rom_pod.evaluate_rhs, z0, t0, tf, dt, t_eval, "rk4")
+    sol_pod_r = solve_ivp(rom_pod.evaluate_rhs, z0, t0, tf, dt, t_eval, "rk45", rtol=rtol, atol=atol)
     sol_pod = proj_pod.decode(sol_pod_r.T).T
     error_pod += np.linalg.norm(sol_pod - pool.X[k], axis=0)**2 / mean_en / n_traj
 
     # OpInf
     z0_oi = Psi_oi.T @ pool.X[k, :, 0]
-    sol_oi_r = solve_ivp(rom_oi.evaluate_rhs, z0_oi, t0, tf, dt, t_eval, "rk4")
+    sol_oi_r = solve_ivp(rom_oi.evaluate_rhs, z0_oi, t0, tf, dt, t_eval, "rk45", rtol=rtol, atol=atol)
     sol_oi = proj_oi.decode(sol_oi_r.T).T
     error_oi += np.linalg.norm(sol_oi - pool.X[k], axis=0)**2 / mean_en / n_traj
 
     # GasOpInf
     z0_oi_gs = Psi_oi_gs.T @ pool.X[k, :, 0]
-    sol_oi_gs_r = solve_ivp(rom_oi_gs.evaluate_rhs, z0_oi_gs, t0, tf, dt, t_eval, "rk4")
+    sol_oi_gs_r = solve_ivp(rom_oi_gs.evaluate_rhs, z0_oi_gs, t0, tf, dt, t_eval, "rk45", rtol=rtol, atol=atol)
     sol_oi_gs = proj_oi_gs.decode(sol_oi_gs_r.T).T
     error_oi_gs += np.linalg.norm(sol_oi_gs - pool.X[k], axis=0)**2 / mean_en / n_traj
 
     # NiTROM
     z0_nit = Psi_nit.T @ pool.X[k, :, 0]
-    sol_nit_r = solve_ivp(rom_nit.evaluate_rhs, z0_nit, t0, tf, dt, t_eval, "rk4")
+    sol_nit_r = solve_ivp(rom_nit.evaluate_rhs, z0_nit, t0, tf, dt, t_eval, "rk45", rtol=rtol, atol=atol)
     sol_nit = proj_nit.decode(sol_nit_r.T).T
     error_nit += np.linalg.norm(sol_nit - pool.X[k], axis=0)**2 / mean_en / n_traj
 
     # GasNiTROM
     z0_nit_gs = Psi_nit_gs.T @ pool.X[k, :, 0]
-    sol_nit_gs_r = solve_ivp(rom_nit_gs.evaluate_rhs, z0_nit_gs, t0, tf, dt, t_eval, "rk4")
+    sol_nit_gs_r = solve_ivp(rom_nit_gs.evaluate_rhs, z0_nit_gs, t0, tf, dt, t_eval, "rk45", rtol=rtol, atol=atol)
     sol_nit_gs = proj_nit_gs.decode(sol_nit_gs_r.T).T
     error_nit_gs += np.linalg.norm(sol_nit_gs - pool.X[k], axis=0)**2 / mean_en / n_traj
 
@@ -224,13 +227,13 @@ ax.semilogy(t_eval, error_oi_gs, label='GasOpInf', color=COLORS["opinf"], linest
 ax.semilogy(t_eval, error_nit, label='NiTROM', color=COLORS["nitrom"], linestyle=STYLES["notgas"])
 ax.semilogy(t_eval, error_nit_gs, label='GasNiTROM', color=COLORS["nitrom"], linestyle=STYLES["gas"])
 style_axes(ax, xlabel='Time $t$', ylabel='Error', xlim=(0.0, float(t_eval[-1])), ylim=(1e-3, 1e2), log_y=True)
-ax.legend(loc='upper right', ncol=3, columnspacing=1.0, handletextpad=0.5)
+# ax.legend(loc='upper right', ncol=3, columnspacing=1.0, handletextpad=0.5)
 save_figure(fig, f'cavity_30_error_{which}_full')
 
 # --- 3) Sinusoidal Forcing ---
-time_np = dt * np.arange(0, 80 * n, 1)
+time_np = dt_orig * np.arange(0, 80 * n, 1)
 nsave = 5
-amp = 0.1
+amp = 0.9
 energies = []
 ks = [1, 2, 4]
 
@@ -250,7 +253,7 @@ for harmonic in ks:
     freq = 1.00 * harmonic
     tf_f = np.arange(0, 2 * np.pi / freq, dt)
     fint = sp.interpolate.interp1d(tf_f, amp * np.sin(freq * tf_f), kind='linear', fill_value="extrapolate")
-    print("Simulating trajectory with forcing frequency %.2f..." % freq)
+    print("Forcing frequency %.2f..." % freq)
 
     qic = flow.q_sbf.copy()
     dataf, tsavef = tstep.solver_2D(
@@ -269,27 +272,27 @@ for harmonic in ks:
     dt_f = float(tsavef[1] - tsavef[0])
 
     # POD
-    sol_pod_r = solve_ivp(rom_pod.evaluate_rhs, z0, t0_f, tf_f, dt_f, tsavef, "rk4", external_forcing=make_forcing_fn(Psi_pod))
+    sol_pod_r = solve_ivp(rom_pod.evaluate_rhs, z0, t0_f, tf_f, dt_f, tsavef, "rk45", external_forcing=make_forcing_fn(Psi_pod), rtol=rtol, atol=atol)
     sol_pod = proj_pod.decode(sol_pod_r.T).T
     energy_pod = np.linalg.norm(sol_pod, axis=0)**2
 
     # OpInf
-    sol_oi_r = solve_ivp(rom_oi.evaluate_rhs, z0, t0_f, tf_f, dt_f, tsavef, "rk4", external_forcing=make_forcing_fn(Psi_oi))
+    sol_oi_r = solve_ivp(rom_oi.evaluate_rhs, z0, t0_f, tf_f, dt_f, tsavef, "rk45", external_forcing=make_forcing_fn(Psi_oi), rtol=rtol, atol=atol)
     sol_oi = proj_oi.decode(sol_oi_r.T).T
     energy_oi = np.linalg.norm(sol_oi, axis=0)**2
 
     # GasOpInf
-    sol_oi_gs_r = solve_ivp(rom_oi_gs.evaluate_rhs, z0, t0_f, tf_f, dt_f, tsavef, "rk4", external_forcing=make_forcing_fn(Psi_oi_gs))
+    sol_oi_gs_r = solve_ivp(rom_oi_gs.evaluate_rhs, z0, t0_f, tf_f, dt_f, tsavef, "rk45", external_forcing=make_forcing_fn(Psi_oi_gs), rtol=rtol, atol=atol)
     sol_oi_gs = proj_oi_gs.decode(sol_oi_gs_r.T).T
     energy_oi_gs = np.linalg.norm(sol_oi_gs, axis=0)**2
 
     # NiTROM
-    sol_nit_r = solve_ivp(rom_nit.evaluate_rhs, z0, t0_f, tf_f, dt_f, tsavef, "rk4", external_forcing=make_forcing_fn(Psi_nit))
+    sol_nit_r = solve_ivp(rom_nit.evaluate_rhs, z0, t0_f, tf_f, dt_f, tsavef, "rk45", external_forcing=make_forcing_fn(Psi_nit), rtol=rtol, atol=atol)
     sol_nit = proj_nit.decode(sol_nit_r.T).T
     energy_nit = np.linalg.norm(sol_nit, axis=0)**2
 
     # GasNiTROM
-    sol_nit_gs_r = solve_ivp(rom_nit_gs.evaluate_rhs, z0, t0_f, tf_f, dt_f, tsavef, "rk4", external_forcing=make_forcing_fn(Psi_nit_gs))
+    sol_nit_gs_r = solve_ivp(rom_nit_gs.evaluate_rhs, z0, t0_f, tf_f, dt_f, tsavef, "rk45", external_forcing=make_forcing_fn(Psi_nit_gs), rtol=rtol, atol=atol)
     sol_nit_gs = proj_nit_gs.decode(sol_nit_gs_r.T).T
     energy_nit_gs = np.linalg.norm(sol_nit_gs, axis=0)**2
 
@@ -343,6 +346,9 @@ axes = axes.ravel()
 
 for idx_subplot, (ax, (title, state_vec)) in enumerate(zip(axes, snapshots)):
     X, Y, fields = pp.output_fields(flow, state_vec)
+    if title == "POD-Gal." and amp_str == '0p9':
+        fields[ii] = np.zeros_like(fields[ii])
+        title += " (blew up)"
     cf = ax.contourf(
         X[ii][:39, :],
         Y[ii][:39, :],
@@ -382,16 +388,26 @@ with open(os.path.join(models_dir, "nitrom_history.pkl"), "rb") as f:
 with open(os.path.join(models_dir, "gas_nitrom_history.pkl"), "rb") as f:
     hist_gas_nitrom = pickle.load(f)
 
+# Timings
+time_gas_opinf = hist_gas_opinf["time"]
+time_nitrom = hist_nitrom["time"]
+time_gas_nitrom = hist_gas_nitrom["time"]
+print("GasOpInf time:", time_gas_opinf)
+print("NiTROM time:", time_nitrom)
+print("GasNiTROM time:", time_gas_nitrom)
+
 # Cost vs Iteration Plot
 fig, ax1 = make_figure()
 ax2 = ax1.twinx()
 
-l1 = ax1.semilogy(hist_nitrom["iters"], hist_nitrom["loss"], label='NiTROM', color='darkgreen', linestyle=STYLES["gas"])
+l1 = ax1.semilogy(hist_nitrom["iters"], hist_nitrom["loss"], label='NiTROM', color=COLORS["nitrom"], linestyle=STYLES["notgas"])
 l2 = ax1.semilogy(hist_gas_nitrom["iters"], hist_gas_nitrom["loss"], label='GasNiTROM', color=COLORS["nitrom"], linestyle=STYLES["gas"])
 style_axes(ax1, xlabel='Iteration', ylabel=r'$J_{\text{NiTROM}}$', log_y=True)
+ax1.tick_params(axis='y', colors=COLORS["nitrom"])
 
 l3 = ax2.semilogy(hist_gas_opinf["iters"], hist_gas_opinf["loss"], label='GasOpInf', color=COLORS["opinf"], linestyle=STYLES["gas"])
-ax2.set_ylabel(r'$J_{\text{OpInf}}$')
+ax2.set_ylabel(r'$J_{\text{OpInf}}$', color=COLORS["opinf"])
+ax2.tick_params(axis='y', colors=COLORS["opinf"])
 ax2.set_yscale("log")
 ax2.yaxis.set_major_locator(LogLocator(base=10.0))
 ax2.yaxis.set_minor_locator(LogLocator(base=10.0, subs=np.arange(2, 10) * 0.1))
@@ -401,16 +417,16 @@ lines = l1 + l2 + l3
 labels = [l.get_label() for l in lines]
 ax1.legend(lines, labels, loc='upper right')
 
-save_figure(fig, 'cost_history')
+save_figure(fig, 'cost_history_cavity_30')
 
 # Gradient Norm vs Iteration Plot
 fig, ax = make_figure()
-ax.semilogy(hist_nitrom["iters"], hist_nitrom["gradnorm"], label='NiTROM', color='darkgreen', linestyle=STYLES["gas"], linewidth=1.0)
+ax.semilogy(hist_nitrom["iters"], hist_nitrom["gradnorm"], label='NiTROM', color=COLORS["nitrom"], linestyle=STYLES["notgas"], linewidth=1.0)
 ax.semilogy(hist_gas_nitrom["iters"], hist_gas_nitrom["gradnorm"], label='GasNiTROM', color=COLORS["nitrom"], linestyle=STYLES["gas"], linewidth=1.0)
 ax.semilogy(hist_gas_opinf["iters"], hist_gas_opinf["gradnorm"], label='GasOpInf', color=COLORS["opinf"], linestyle=STYLES["gas"], linewidth=1.0)
 style_axes(ax, xlabel='Iteration', ylabel='Gradient Norm', log_y=True)
 ax.legend(loc='upper right')
 
-save_figure(fig, 'gradnorm_history')
+save_figure(fig, 'gradnorm_history_cavity_30')
 
 print("All figures plotted and saved successfully!")

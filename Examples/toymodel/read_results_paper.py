@@ -21,6 +21,8 @@ FIG_WIDTH = 3.4
 FIG_WIDTH_WIDE = 6.8
 FIG_HEIGHT = 2.6
 TRAINING_SHADE = "#ececec"
+rtol = 1e-4
+atol = 1e-8
 
 
 def make_figure(*, wide=False):
@@ -61,7 +63,7 @@ def add_training_window(ax, x_end=10.0):
         bbox=dict(facecolor="white", edgecolor="#6f6f6f", linewidth=0.6, alpha=0.95, boxstyle="round,pad=0.25"),
     )
 
-adjoint_method = 'discrete'
+adjoint_method = 'continuous'
 def save_figure(fig, stem):
     os.makedirs(f"figures_{adjoint_method}_adjoint", exist_ok=True)
     fig.savefig(f"figures_{adjoint_method}_adjoint/{stem}.eps", format="eps")
@@ -139,7 +141,7 @@ for k in range(len(betas)):
     x0 = np.zeros(n, dtype=dtype)
     z0 = np.zeros(r, dtype=dtype)
 
-    sol = solve_ivp(fom.evaluate_fom_dynamics, x0, t0, tf, dt, t_eval, "rk4", u=u_fom)
+    sol = solve_ivp(fom.evaluate_fom_dynamics, x0, t0, tf, dt, t_eval, "rk45", u=u_fom, rtol=rtol, atol=atol)
     y_fom = fom.compute_output(sol)
 
     id_ss = np.array([-b / (-1 + 4 * b), -b / (-2 + 4 * b), b / 5], dtype=dtype)
@@ -149,40 +151,40 @@ for k in range(len(betas)):
     forcing_fns = [lambda t, val=b: np.array([val], dtype=dtype)]
 
     sol_pod_r = solve_ivp(
-        rom_pod.evaluate_rhs, z0, t0, tf, dt, t_eval, "rk4",
-        external_forcing=forcing_fns
+        rom_pod.evaluate_rhs, z0, t0, tf, dt, t_eval, "rk45",
+        external_forcing=forcing_fns, rtol=rtol, atol=atol
     )
     sol_pod = proj_pod.decode(sol_pod_r.T).T
     y_pod = fom.compute_output(sol_pod)
     error_pod += np.linalg.norm(y_pod - y_fom, axis=0) ** 2 / weight / len(betas)
 
     sol_oi_r = solve_ivp(
-        rom_oi.evaluate_rhs, z0, t0, tf, dt, t_eval, "rk4",
-        external_forcing=forcing_fns
+        rom_oi.evaluate_rhs, z0, t0, tf, dt, t_eval, "rk45",
+        external_forcing=forcing_fns, rtol=rtol, atol=atol
     )
     sol_oi = proj_oi.decode(sol_oi_r.T).T
     y_oi = fom.compute_output(sol_oi)
     error_oi += np.linalg.norm(y_oi - y_fom, axis=0) ** 2 / weight / len(betas)
 
     sol_oi_gs_r = solve_ivp(
-        rom_oi_gs.evaluate_rhs, z0, t0, tf, dt, t_eval, "rk4",
-        external_forcing=forcing_fns
+        rom_oi_gs.evaluate_rhs, z0, t0, tf, dt, t_eval, "rk45",
+        external_forcing=forcing_fns, rtol=rtol, atol=atol
     )
     sol_oi_gs = proj_oi_gs.decode(sol_oi_gs_r.T).T
     y_oi_gs = fom.compute_output(sol_oi_gs)
     error_oi_gs += np.linalg.norm(y_oi_gs - y_fom, axis=0) ** 2 / weight / len(betas)
 
     sol_nit_r = solve_ivp(
-        rom_nit.evaluate_rhs, z0, t0, tf, dt, t_eval, "rk4",
-        external_forcing=forcing_fns
+        rom_nit.evaluate_rhs, z0, t0, tf, dt, t_eval, "rk45",
+        external_forcing=forcing_fns, rtol=rtol, atol=atol
     )
     sol_nit = proj_nit.decode(sol_nit_r.T).T
     y_nit = fom.compute_output(sol_nit)
     error_nit += np.linalg.norm(y_nit - y_fom, axis=0) ** 2 / weight / len(betas)
 
     sol_nit_gs_r = solve_ivp(
-        rom_nit_gs.evaluate_rhs, z0, t0, tf, dt, t_eval, "rk4",
-        external_forcing=forcing_fns
+        rom_nit_gs.evaluate_rhs, z0, t0, tf, dt, t_eval, "rk45",
+        external_forcing=forcing_fns, rtol=rtol, atol=atol
     )
     sol_nit_gs = proj_nit_gs.decode(sol_nit_gs_r.T).T
     y_nit_gs = fom.compute_output(sol_nit_gs)
@@ -221,36 +223,36 @@ fom_forcing_low = lambda t: B[:, 0] * (0.45 * (np.sin(t) + np.cos(2.0 * t)))
 x0 = np.zeros(n, dtype=dtype)
 z0 = np.zeros(r, dtype=dtype)
 
-sol_fom = solve_ivp(fom.evaluate_fom_dynamics, x0, t0, tf, dt, t_eval, "rk4", u=fom_forcing_low)
+sol_fom = solve_ivp(fom.evaluate_fom_dynamics, x0, t0, tf, dt, t_eval, "rk45", u=fom_forcing_low, rtol=rtol, atol=atol)
 y_fom_low = fom.compute_output(sol_fom)
 
 sol_pod_r = solve_ivp(
-    rom_pod.evaluate_rhs, z0, t0, tf, dt, t_eval, "rk4",
-    external_forcing=[u_fun_low]
+    rom_pod.evaluate_rhs, z0, t0, tf, dt, t_eval, "rk45",
+    external_forcing=[u_fun_low], rtol=rtol, atol=atol
 )
 y_pod_low = fom.compute_output(proj_pod.decode(sol_pod_r.T).T)
 
 sol_oi_r = solve_ivp(
-    rom_oi.evaluate_rhs, z0, t0, tf, dt, t_eval, "rk4",
-    external_forcing=[u_fun_low]
+    rom_oi.evaluate_rhs, z0, t0, tf, dt, t_eval, "rk45",
+    external_forcing=[u_fun_low], rtol=rtol, atol=atol
 )
 y_oi_low = fom.compute_output(proj_oi.decode(sol_oi_r.T).T)
 
 sol_oi_gs_r = solve_ivp(
-    rom_oi_gs.evaluate_rhs, z0, t0, tf, dt, t_eval, "rk4",
-    external_forcing=[u_fun_low]
+    rom_oi_gs.evaluate_rhs, z0, t0, tf, dt, t_eval, "rk45",
+    external_forcing=[u_fun_low], rtol=rtol, atol=atol
 )
 y_oi_gs_low = fom.compute_output(proj_oi_gs.decode(sol_oi_gs_r.T).T)
 
 sol_nit_r = solve_ivp(
-    rom_nit.evaluate_rhs, z0, t0, tf, dt, t_eval, "rk4",
-    external_forcing=[u_fun_low]
+    rom_nit.evaluate_rhs, z0, t0, tf, dt, t_eval, "rk45",
+    external_forcing=[u_fun_low], rtol=rtol, atol=atol
 )
 y_nit_low = fom.compute_output(proj_nit.decode(sol_nit_r.T).T)
 
 sol_nit_gs_r = solve_ivp(
-    rom_nit_gs.evaluate_rhs, z0, t0, tf, dt, t_eval, "rk4",
-    external_forcing=[u_fun_low]
+    rom_nit_gs.evaluate_rhs, z0, t0, tf, dt, t_eval, "rk45",
+    external_forcing=[u_fun_low], rtol=rtol, atol=atol
 )
 y_nit_gs_low = fom.compute_output(proj_nit_gs.decode(sol_nit_gs_r.T).T)
 
@@ -279,36 +281,36 @@ save_figure(fig, 'response_toymodel_low_30')
 u_fun_high = lambda t: np.array([0.75 * (np.sin(t) + np.cos(2.0 * t))], dtype=dtype)
 fom_forcing_high = lambda t: B[:, 0] * (0.65 * (np.sin(t) + np.cos(2.0 * t)))
 
-sol_fom = solve_ivp(fom.evaluate_fom_dynamics, x0, t0, tf, dt, t_eval, "rk4", u=fom_forcing_high)
+sol_fom = solve_ivp(fom.evaluate_fom_dynamics, x0, t0, tf, dt, t_eval, "rk45", u=fom_forcing_high, rtol=rtol, atol=atol)
 y_fom_high = fom.compute_output(sol_fom)
 
 sol_pod_r = solve_ivp(
-    rom_pod.evaluate_rhs, z0, t0, tf, dt, t_eval, "rk4",
-    external_forcing=[u_fun_high]
+    rom_pod.evaluate_rhs, z0, t0, tf, dt, t_eval, "rk45",
+    external_forcing=[u_fun_high], rtol=rtol, atol=atol
 )
 y_pod_high = fom.compute_output(proj_pod.decode(sol_pod_r.T).T)
 
 sol_oi_r = solve_ivp(
-    rom_oi.evaluate_rhs, z0, t0, tf, dt, t_eval, "rk4",
-    external_forcing=[u_fun_high]
+    rom_oi.evaluate_rhs, z0, t0, tf, dt, t_eval, "rk45",
+    external_forcing=[u_fun_high], rtol=rtol, atol=atol
 )
 y_oi_high = fom.compute_output(proj_oi.decode(sol_oi_r.T).T)
 
 sol_oi_gs_r = solve_ivp(
-    rom_oi_gs.evaluate_rhs, z0, t0, tf, dt, t_eval, "rk4",
-    external_forcing=[u_fun_high]
+    rom_oi_gs.evaluate_rhs, z0, t0, tf, dt, t_eval, "rk45",
+    external_forcing=[u_fun_high], rtol=rtol, atol=atol
 )
 y_oi_gs_high = fom.compute_output(proj_oi_gs.decode(sol_oi_gs_r.T).T)
 
 sol_nit_r = solve_ivp(
-    rom_nit.evaluate_rhs, z0, t0, tf, dt, t_eval, "rk4",
-    external_forcing=[u_fun_high]
+    rom_nit.evaluate_rhs, z0, t0, tf, dt, t_eval, "rk45",
+    external_forcing=[u_fun_high], rtol=rtol, atol=atol
 )
 y_nit_high = fom.compute_output(proj_nit.decode(sol_nit_r.T).T)
 
 sol_nit_gs_r = solve_ivp(
-    rom_nit_gs.evaluate_rhs, z0, t0, tf, dt, t_eval, "rk4",
-    external_forcing=[u_fun_high]
+    rom_nit_gs.evaluate_rhs, z0, t0, tf, dt, t_eval, "rk45",
+    external_forcing=[u_fun_high], rtol=rtol, atol=atol
 )
 y_nit_gs_high = fom.compute_output(proj_nit_gs.decode(sol_nit_gs_r.T).T)
 
@@ -375,13 +377,11 @@ l2 = ax1.semilogy(hist_gas_nitrom["iters"], hist_gas_nitrom["loss"], label='GasN
 style_axes(ax1, xlabel='Iteration', ylabel=r'$J_{\text{NiTROM}}$', log_y=True)
 ax1.yaxis.label.set_color(COLORS["nitrom"])
 ax1.tick_params(axis='y', colors=COLORS["nitrom"])
-ax1.spines['left'].set_color(COLORS["nitrom"])
 
 # Plot GasOpInf cost on right y-axis
 l3 = ax2.semilogy(hist_gas_opinf["iters"], hist_gas_opinf["loss"], label='GasOpInf', color=COLORS["opinf"], linestyle=STYLES["gas"])
 ax2.set_ylabel(r'$J_{\text{OpInf}}$', color=COLORS["opinf"])
 ax2.tick_params(axis='y', colors=COLORS["opinf"])
-ax2.spines['right'].set_color(COLORS["opinf"])
 ax2.set_yscale("log")
 ax2.yaxis.set_major_locator(LogLocator(base=10.0))
 ax2.yaxis.set_minor_locator(LogLocator(base=10.0, subs=np.arange(2, 10) * 0.1))
@@ -392,7 +392,7 @@ lines = l1 + l2 + l3
 labels = [l.get_label() for l in lines]
 ax1.legend(lines, labels, loc='upper right')
 
-save_figure(fig, 'cost_history')
+save_figure(fig, 'cost_history_toymodel')
 
 # Gradient Norm vs Iteration Plot
 fig, ax = make_figure()
@@ -402,6 +402,6 @@ ax.semilogy(hist_gas_opinf["iters"], hist_gas_opinf["gradnorm"], label='GasOpInf
 style_axes(ax, xlabel='Iteration', ylabel='Gradient Norm', log_y=True)
 ax.legend(loc='lower right')
 
-save_figure(fig, 'gradnorm_history')
+save_figure(fig, 'gradnorm_history_toymodel')
 
 print("All figures plotted and saved successfully!")

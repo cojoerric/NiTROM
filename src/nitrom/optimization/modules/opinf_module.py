@@ -184,7 +184,7 @@ class OpInfModule(InferenceModule):
             from nitrom.backend import distributed_rank_size
             _, world_size = distributed_rank_size()
             reg = self.reg / world_size
-            grads = self.rom.vjp_evaluate_rhs(Z_flat, v, reg=reg)
+            grads = self.rom.inner_vjp_evaluate_rhs(Z_flat, v, reg=reg)
         else:
             # Accumulate VJP over time snapshots
             grads = None
@@ -196,7 +196,7 @@ class OpInfModule(InferenceModule):
                 z_j = self.Z[:, :, j]           # (ntraj, r)
                 v_j = -2.0 * RW[:, :, j]        # (ntraj, r)
                 reg_j = reg_val if j == 0 else 0.0
-                grads_j = self.rom.vjp_evaluate_rhs(
+                grads_j = self.rom.inner_vjp_evaluate_rhs(
                     z_j, v_j,
                     reg=reg_j,
                     external_forcing=self.forcing_fns, t=t_j,
@@ -206,6 +206,8 @@ class OpInfModule(InferenceModule):
                 else:
                     for i in range(len(grads)):
                         grads[i] = grads[i] + grads_j[i]
+
+        grads = self.rom.project_inner_gradients(grads)
 
         # Zero the gradient of any non-learnable parameter (base class).
         return self._apply_learnability(grads)

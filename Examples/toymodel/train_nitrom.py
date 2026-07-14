@@ -21,7 +21,7 @@ dtype = np.float64
 rank, world_size = mpi_rank_size()
 
 traj_path = "./trajectories/"
-adjoint_method = 'discrete'
+adjoint_method = 'continuous'
 models_dir = f"./models_{adjoint_method}_adjoint/"
 n_traj = 4
 r = 2  # reduced dimension

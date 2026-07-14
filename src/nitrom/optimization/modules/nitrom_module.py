@@ -43,12 +43,14 @@ class NitromModule(InferenceModule):
         time_stepper: str = "rk4",
         n_leggauss: int = 5,
         adjoint_method: str = "discrete",
+        atol: float = 1e-6,
+        rtol: float = 1e-3,
     ) -> None:
         super().__init__()
 
-        if time_stepper not in ("rk2", "rk4", "backward_euler"):
+        if time_stepper not in ("rk2", "rk4", "backward_euler", "rk45"):
             raise ValueError(
-                f"time_stepper must be 'rk2', 'rk4', or 'backward_euler', "
+                f"time_stepper must be 'rk2', 'rk4', 'backward_euler', or 'rk45', "
                 f"got {time_stepper!r}."
             )
 
@@ -66,6 +68,8 @@ class NitromModule(InferenceModule):
         self.time_stepper = time_stepper
         self.n_leggauss = n_leggauss
         self.adjoint_method = adjoint_method
+        self.atol = atol
+        self.rtol = rtol
 
         # Convenience handles into the registry's components
         self.model = registry.model
@@ -160,6 +164,8 @@ class NitromModule(InferenceModule):
             dt,
             self.time,
             self.time_stepper,
+            atol=self.atol,
+            rtol=self.rtol,
             external_forcing=self.forcing_fns or None,
         )  # (ntraj, r, nt)
 
@@ -171,12 +177,12 @@ class NitromModule(InferenceModule):
         return per_traj.sum()
 
     def _vjp_rhs(self, z: Any, lam: Any, t: float) -> list:
-        """VJP of the latent RHS w.r.t. the model parameters (forwards forcing)."""
+        """VJP of the latent RHS w.r.t. the inner model parameters (forwards forcing)."""
         if getattr(self.model, "forcing_exists", False) and self.forcing_fns:
-            return self.model.vjp_evaluate_rhs(
+            return self.model.inner_vjp_evaluate_rhs(
                 z, lam, external_forcing=self.forcing_fns, t=t
             )
-        return self.model.vjp_evaluate_rhs(z, lam)
+        return self.model.inner_vjp_evaluate_rhs(z, lam)
 
     def gradient(self) -> list:
         r"""
@@ -206,7 +212,8 @@ class NitromModule(InferenceModule):
             dt = (time[1] - time[0]) / self.n_substeps
             Z = solve_ivp(
                 self.model.evaluate_rhs, z0, time[0], time[-1], dt, time,
-                self.time_stepper, external_forcing=ef,
+                self.time_stepper, atol=self.atol, rtol=self.rtol,
+                external_forcing=ef,
             )  # (ntraj, r, nt)
 
             # --- output residual and adjoint sources at each snapshot ------
@@ -234,7 +241,7 @@ class NitromModule(InferenceModule):
             proj_grads = list(self.projection.vjp_decode(Z_flat, cw_flat))
 
             # --- backward adjoint sweep --------------------------------------
-            model_grads = [bkend.zeros_like(p) for p in self.model.get_params()]
+            model_grads = [bkend.zeros_like(p) for p in self.model.inner_params()]
             lam = bkend.zeros((ntraj, r), device=dev, dtype=dtype)
 
             if self.adjoint_method == "discrete":
@@ -252,6 +259,7 @@ class NitromModule(InferenceModule):
                     Zint = solve_ivp(
                         self.model.evaluate_rhs, Z[:, :, k - 1], t0i, tfi,
                         h, sub_t, self.time_stepper,
+                        atol=self.atol, rtol=self.rtol,
                         external_forcing=ef,
                     )  # (ntraj, r, n_substeps + 1)
                     
@@ -286,6 +294,7 @@ class NitromModule(InferenceModule):
                     Zint = solve_ivp(
                         self.model.evaluate_rhs, Z[:, :, k - 1], t0i, tfi,
                         delta / self.n_substeps, sub_t, self.time_stepper,
+                        atol=self.atol, rtol=self.rtol,
                         external_forcing=ef,
                     )  # (ntraj, r, n_substeps + 1)
 
@@ -308,7 +317,7 @@ class NitromModule(InferenceModule):
                     )
                     Lam_sol = solve_ivp(
                         adj_rhs, lam, 0.0, delta, delta / self.n_substeps, tau_eval,
-                        self.time_stepper,
+                        self.time_stepper, atol=self.atol, rtol=self.rtol,
                     )  # (ntraj, r, n_leggauss + 1)
 
                     # Adjoint at the GL nodes (undo the sort); carry lambda(t_{k-1}).
@@ -337,7 +346,7 @@ class NitromModule(InferenceModule):
                         # Flatten (trajectory, node) and reduce in one VJP call.
                         Zf = bkend.permute(Z_nodes, (0, 2, 1)).reshape(-1, r)
                         Lf = bkend.permute(Lam_w, (0, 2, 1)).reshape(-1, r)
-                        for idx, g in enumerate(self.model.vjp_evaluate_rhs(Zf, Lf)):
+                        for idx, g in enumerate(self.model.inner_vjp_evaluate_rhs(Zf, Lf)):
                             model_grads[idx] = model_grads[idx] + g
 
             # Measurement at t_0, then encoder gradient seeded with lambda(0).
@@ -346,6 +355,8 @@ class NitromModule(InferenceModule):
                 proj_grads[k] = proj_grads[k] + g
 
             # --- assemble in registry order, summing shared contributions --
+            model_grads = self.model.project_inner_gradients(model_grads)
+            
             grad_by_name: dict[str, Any] = {}
             for name, g in zip(self.projection.param_names, proj_grads, strict=True):
                 grad_by_name[name] = g

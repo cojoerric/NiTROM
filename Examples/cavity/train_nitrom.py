@@ -127,7 +127,7 @@ projection = LinearProjection([Phi, Phi])  # orthogonal (Psi = Phi)
 training_data = TrainingData(
     pool,
     which_trajs=list(range(n_traj)),
-    percent_time_length=1.0,
+    percent_time_length=0.5,
     leggauss_deg=5,
     nsave_rom=15,
 )

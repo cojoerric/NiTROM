@@ -80,14 +80,14 @@ nitrom_model = PolynomialModel(
     r, poly_comp, dtype=dtype, forcing_config=forcing_config, tensors=(A2r, A3r, Br),
 )
 registry = ParamRegistry(nitrom_model, projection)
-nitrom = NitromModule(training_data, registry, fom=fom, n_substeps=15, adjoint_method='discrete')
+nitrom = NitromModule(training_data, registry, fom=fom, n_substeps=15, adjoint_method='continuous')
 
 # 3) Setup GasNiTROM
 gas_nitrom_model = GasPolynomialModel(
     r, poly_comp, dtype=dtype, gas_params=gas_init, forcing_config=forcing_config,
 )
 registry_gas = ParamRegistry(gas_nitrom_model, projection)
-gasnitrom = NitromModule(training_data, registry_gas, fom=fom, n_substeps=15, adjoint_method='discrete')
+gasnitrom = NitromModule(training_data, registry_gas, fom=fom, n_substeps=15, adjoint_method='continuous')
 
 
 def time_module(module, name, num_calls=50):

@@ -30,7 +30,7 @@ def gcost(m):
     return mpi_allreduce_scalar(c) if world_size > 1 else c
 
 traj_path = "./trajectories/"
-models_dir = "./models_continuous_adjoint/"
+models_dir = "./models_discrete_adjoint/"
 n_traj = 4
 r = 2  # reduced dimension
 poly_comp = [1, 2]
@@ -127,7 +127,7 @@ gas_init = [*seed.get_params(), np.copy(opinf.B)]
 gas_model = GasPolynomialModel(
     r, poly_comp, dtype=dtype, gas_params=gas_init, forcing_config=forcing_config,
 )
-gas = OpInfModule(training_data, gas_model, projection, reg=8.902151e-05)
+gas = OpInfModule(training_data, gas_model, projection, reg=1e-12)
 gas.set_unlearnable("B")  # B = Phi^T B_fom is fixed, not trained
 printr(f"initial cost: {gcost(gas):.6e}")
 t0 = time.perf_counter()

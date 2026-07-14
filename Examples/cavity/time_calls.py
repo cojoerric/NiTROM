@@ -56,6 +56,8 @@ pool = TrainingPool(
     fname_derivs=traj_path + "deriv_%03d.npy",
 )
 
+n_snap = pool.n_snapshots
+
 # Compute POD basis (rank r) of the pre-projected snapshots (dimension 200)
 U, _, _ = compute_POD(pool, normalize=True)
 Phi = U[:, :r]  # (200, r)
@@ -109,20 +111,20 @@ def time_module(module, name, num_calls=50):
     t0 = time.perf_counter()
     for _ in range(num_calls):
         _ = module()
-    t_cost = (time.perf_counter() - t0) / num_calls
+    t_cost = (time.perf_counter() - t0) / num_calls / n_traj / n_snap
 
     # Time gradient evaluations
     t0 = time.perf_counter()
     for _ in range(num_calls):
         _ = module.gradient()
-    t_grad = (time.perf_counter() - t0) / num_calls
+    t_grad = (time.perf_counter() - t0) / num_calls / n_traj / n_snap
 
     print(f"{name:<12} | {t_cost:12.6f} | {t_grad:12.6f}")
     return t_cost, t_grad
 
 
 if __name__ == "__main__":
-    num_calls = 50
+    num_calls = 1
     print(f"Timing average of {num_calls} calls for cost and gradient functions...\n")
     print(f"{'Method':<12} | {'Avg Cost (s)':<12} | {'Avg Grad (s)':<12}")
     print("-" * 48)

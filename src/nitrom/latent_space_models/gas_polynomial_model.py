@@ -425,22 +425,17 @@ class GasPolynomialModel(Model):
         """Delegate to the inner :class:`PolynomialModel`."""
         return self.model.evaluate_adjoint_rhs(t, z, Z, **kwargs)
 
-    def vjp_evaluate_rhs(self, z: Any, v: Any, reg: float = 0.0, **kwargs) -> list[Any]:
-        r"""
-        VJP of the RHS with respect to the GAS parameters.
+    def inner_params(self) -> list[Any]:
+        """Return the inner parameter tensors A, H, [B]."""
+        return self.model.get_params()
 
-        Calls the inner :class:`PolynomialModel` VJP to get gradients
-        w.r.t. ``(A, H, [B])``, then propagates through the GAS assembly
-        to obtain gradients w.r.t. ``(K, R, Q, S, [B])``.
-
-        :param z: state vector of shape ``(n,)`` or ``(m, n)``
-        :param v: upstream adjoint seed, same shape as ``z``
-        :returns: list of gradients matching :attr:`param_names`
-        :rtype: list
+    def project_inner_gradients(self, inner_grads: list[Any]) -> list[Any]:
+        """
+        Project the accumulated inner gradients (w.r.t A, H, [B]) back to the 
+        GAS parameters (K, R, Q, S, [B]).
         """
         bkend = self.backend
-        inner_grads = self.model.vjp_evaluate_rhs(z, v, reg=reg, **kwargs)
-
+        
         # Unpack inner gradients (indexed by position in poly_comp)
         grad_A = inner_grads[self.poly_comp.index(1)] if 1 in self.poly_comp else None
         grad_H = inner_grads[self.poly_comp.index(2)] if 2 in self.poly_comp else None
@@ -483,3 +478,29 @@ class GasPolynomialModel(Model):
             grads.append(grad_B)
 
         return grads
+
+    def inner_vjp_evaluate_rhs(self, z: Any, v: Any, reg: float = 0.0, **kwargs) -> list[Any]:
+        r"""
+        VJP of the RHS with respect to the inner model parameters.
+
+        Calls the inner :class:`PolynomialModel` VJP to get gradients
+        w.r.t. ``(A, H, [B])``.
+
+        :param z: state vector of shape ``(n,)`` or ``(m, n)``
+        :param v: upstream adjoint seed, same shape as ``z``
+        :returns: list of gradients matching :meth:`inner_params`
+        :rtype: list
+        """
+        return self.model.vjp_evaluate_rhs(z, v, reg=reg, **kwargs)
+
+    def vjp_evaluate_rhs(self, z: Any, v: Any, reg: float = 0.0, **kwargs) -> list[Any]:
+        r"""
+        VJP of the RHS with respect to the GAS parameters.
+
+        :param z: state vector of shape ``(n,)`` or ``(m, n)``
+        :param v: upstream adjoint seed, same shape as ``z``
+        :returns: list of gradients matching :attr:`param_names`
+        :rtype: list
+        """
+        inner_grads = self.inner_vjp_evaluate_rhs(z, v, reg=reg, **kwargs)
+        return self.project_inner_gradients(inner_grads)

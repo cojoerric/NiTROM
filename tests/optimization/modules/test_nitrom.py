@@ -51,17 +51,17 @@ def _fom(seed: int = 4) -> LinearOutputFOM:
     return LinearOutputFOM(torch.randn(NO, N, generator=g, dtype=DTYPE))
 
 
-def _module(model, time_stepper="rk4", adjoint_method="discrete") -> NitromModule:
+def _module(model, time_stepper="rk4", adjoint_method="discrete", atol=1e-6, rtol=1e-3) -> NitromModule:
     registry = ParamRegistry(model, _projection())
     return NitromModule(
         _data(), registry, fom=_fom(), reg=0.01,
         n_substeps=100, time_stepper=time_stepper, n_leggauss=5,
-        adjoint_method=adjoint_method,
+        adjoint_method=adjoint_method, atol=atol, rtol=rtol,
     )
 
 
 @pytest.mark.parametrize("adjoint_method", ["discrete", "continuous"])
-@pytest.mark.parametrize("time_stepper", ["rk4", "rk2", "backward_euler"])
+@pytest.mark.parametrize("time_stepper", ["rk4", "rk2", "backward_euler", "rk45"])
 def test_gradient_polynomial_rom(adjoint_method, time_stepper):
     g = torch.Generator().manual_seed(2)
     tensors = [
@@ -73,21 +73,27 @@ def test_gradient_polynomial_rom(adjoint_method, time_stepper):
         R, [1, 2], dtype=DTYPE, tensors=tensors,
         forcing_config={"forcing_exists": True, "m": M},
     )
-    module = _module(model, time_stepper=time_stepper, adjoint_method=adjoint_method)
-    
-    # Continuous adjoint has a larger mismatch with finite difference for first-order Backward Euler due to discretization error
-    if adjoint_method == "continuous" and time_stepper == "backward_euler":
-        rtol, atol = 3e-2, 3e-2
+    if time_stepper == "rk45":
+        atol, rtol = 1e-12, 1e-10
     else:
-        rtol, atol = 1e-4, 1e-6
+        atol, rtol = 1e-6, 1e-3
+    module = _module(model, time_stepper=time_stepper, adjoint_method=adjoint_method, atol=atol, rtol=rtol)
+    
+    # Continuous/discretization mismatch has larger tolerance requirements
+    if adjoint_method == "continuous" and time_stepper == "backward_euler":
+        rtol_check, atol_check = 3e-2, 3e-2
+    elif time_stepper == "rk45":
+        rtol_check, atol_check = 2e-3, 1e-6
+    else:
+        rtol_check, atol_check = 1e-4, 1e-6
         
     assert_grad_close(
-        module.gradient(), finite_diff_grad(module), rtol=rtol, atol=atol
+        module.gradient(), finite_diff_grad(module), rtol=rtol_check, atol=atol_check
     )
 
 
 @pytest.mark.parametrize("adjoint_method", ["discrete", "continuous"])
-@pytest.mark.parametrize("time_stepper", ["rk4", "rk2", "backward_euler"])
+@pytest.mark.parametrize("time_stepper", ["rk4", "rk2", "backward_euler", "rk45"])
 def test_gradient_gas_rom(adjoint_method, time_stepper):
     g = torch.Generator().manual_seed(3)
     eye = torch.eye(R, dtype=DTYPE)
@@ -102,14 +108,20 @@ def test_gradient_gas_rom(adjoint_method, time_stepper):
         R, [1, 2], dtype=DTYPE, gas_params=gas_params,
         forcing_config={"forcing_exists": True, "m": M},
     )
-    module = _module(model, time_stepper=time_stepper, adjoint_method=adjoint_method)
-    
-    # Continuous adjoint has a larger mismatch with finite difference for first-order Backward Euler due to discretization error
-    if adjoint_method == "continuous" and time_stepper == "backward_euler":
-        rtol, atol = 3e-2, 3e-2
+    if time_stepper == "rk45":
+        atol, rtol = 1e-12, 1e-10
     else:
-        rtol, atol = 1e-4, 1e-6
+        atol, rtol = 1e-6, 1e-3
+    module = _module(model, time_stepper=time_stepper, adjoint_method=adjoint_method, atol=atol, rtol=rtol)
+    
+    # Continuous/discretization mismatch has larger tolerance requirements
+    if adjoint_method == "continuous" and time_stepper == "backward_euler":
+        rtol_check, atol_check = 3e-2, 3e-2
+    elif time_stepper == "rk45":
+        rtol_check, atol_check = 2e-3, 1e-4
+    else:
+        rtol_check, atol_check = 1e-4, 1e-6
         
     assert_grad_close(
-        module.gradient(), finite_diff_grad(module), rtol=rtol, atol=atol
+        module.gradient(), finite_diff_grad(module), rtol=rtol_check, atol=atol_check
     )

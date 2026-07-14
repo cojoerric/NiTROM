@@ -95,7 +95,7 @@ fom = fom_class.full_order_model(A2, A3, B, C, dtype=dtype)
 (A2r, A3r), (Br, _) = fom.assemble_petrov_galerkin_tensors(Phi, Phi)
 
 # Sweep range
-regs = np.logspace(-9, -4, 100)
+regs = np.logspace(-12, -4, 130)
 
 best_opinf_reg = None
 best_opinf_cost = float("inf")
