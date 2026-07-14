@@ -21,6 +21,7 @@ rank, world_size = mpi_rank_size()
 traj_path = "./trajectories/"
 models_dir = "./models/"
 r = 50  # reduced dimension
+poly_comp = [1, 2]
 shift_start_times = (0.0, 2.5, 5.0)  # custom start times for each shift window
 
 # Initialization model for GAS-NiTROM: "galerkin", "gas_opinf", or "nitrom".
