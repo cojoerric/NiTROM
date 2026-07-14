@@ -22,6 +22,7 @@ traj_path = "./trajectories/"
 models_dir = "./models/"
 r = 50  # reduced dimension
 poly_comp = [1, 2]
+num_shifts = 3  # number of time shifts for training data augmentation
 
 # Initialization model for GAS-NiTROM: "galerkin", "gas_opinf", or "nitrom".
 init_model = "gas_opinf"
@@ -130,6 +131,7 @@ training_data = TrainingData(
     percent_time_length=0.5,
     leggauss_deg=5,
     nsave_rom=15,
+    num_shifts=num_shifts,
 )
 
 # Galerkin projection (Psi = Phi): (A_r, H_r)
@@ -145,89 +147,91 @@ if rank == 0:
 
 # %% 1) Train standard NiTROM
 printr("\n=== NiTROM ===")
-# nitrom_model = PolynomialModel(
-#     r, poly_comp, dtype=dtype, tensors=(A2r, A3r),
-# )
-# registry = ParamRegistry(nitrom_model, projection)
+nitrom_model = PolynomialModel(
+    r, poly_comp, dtype=dtype, tensors=(A2r, A3r),
+)
+registry = ParamRegistry(nitrom_model, projection)
 
-# # Start with percent_time_length = 0.05
-# td_init = TrainingData(
-#     pool,
-#     which_trajs=list(range(n_traj)),
-#     percent_time_length=0.05,
-#     leggauss_deg=5,
-#     nsave_rom=15,
-# )
-# nitrom = NitromModule(td_init, registry, fom=fom, n_substeps=15, adjoint_method='discrete')
-# nitrom.set_manifold_types(["Phi", "Psi"], ["grassmann", "stiefel"])
+# Start with percent_time_length = 0.05
+td_init = TrainingData(
+    pool,
+    which_trajs=list(range(n_traj)),
+    percent_time_length=0.05,
+    leggauss_deg=5,
+    nsave_rom=15,
+    num_shifts=num_shifts,
+)
+nitrom = NitromModule(td_init, registry, fom=fom, n_substeps=15, adjoint_method='discrete')
+nitrom.set_manifold_types(["Phi", "Psi"], ["grassmann", "stiefel"])
 
 # Alternating optimization parameters
 n_outer_iterations = 6
 epochs_bases = 25
 epochs_operators = 25
 
-# all_nitrom_loss = []
-# all_nitrom_gradnorm = []
+all_nitrom_loss = []
+all_nitrom_gradnorm = []
 
-# printr(f"initial cost: {gcost(nitrom):.6e}")
+printr(f"initial cost: {gcost(nitrom):.6e}")
 
-# t0 = time.perf_counter()
+t0 = time.perf_counter()
 
-# # Loop percent_time_length from 5% to 50% in steps of 5%
+# Loop percent_time_length from 5% to 50% in steps of 5%
 percents = np.arange(0.05, 0.51, 0.05)
-# for p_idx, percent in enumerate(percents):
-#     printr(f"\n--- NiTROM Stage {p_idx + 1}/{len(percents)} (Time length: {percent * 100:.1f}%) ---")
-#     td_slice = TrainingData(
-#         pool,
-#         which_trajs=list(range(n_traj)),
-#         percent_time_length=percent,
-#         leggauss_deg=5,
-#         nsave_rom=15,
-#     )
-#     update_module_training_data(nitrom, td_slice)
+for p_idx, percent in enumerate(percents):
+    printr(f"\n--- NiTROM Stage {p_idx + 1}/{len(percents)} (Time length: {percent * 100:.1f}%) ---")
+    td_slice = TrainingData(
+        pool,
+        which_trajs=list(range(n_traj)),
+        percent_time_length=percent,
+        leggauss_deg=5,
+        nsave_rom=15,
+        num_shifts=num_shifts,
+    )
+    update_module_training_data(nitrom, td_slice)
     
-#     # Alternating optimization
-#     for outer_iter in range(n_outer_iterations):
-#         printr(f"  Outer Iteration {outer_iter + 1}/{n_outer_iterations}:")
+    # Alternating optimization
+    for outer_iter in range(n_outer_iterations):
+        printr(f"  Outer Iteration {outer_iter + 1}/{n_outer_iterations}:")
         
-#         # Optimize bases (Phi, Psi) only
-#         printr("    Optimizing bases (Phi, Psi)...")
-#         set_optimize_bases(nitrom)
-#         train(nitrom, n_epochs=epochs_bases, lr=1.0, optimizer_type="lbfgs", print_every=1, tol=1e-14)
-#         all_nitrom_loss.extend(nitrom.loss_history)
-#         all_nitrom_gradnorm.extend(nitrom.gradnorm_history)
+        # Optimize bases (Phi, Psi) only
+        printr("    Optimizing bases (Phi, Psi)...")
+        set_optimize_bases(nitrom)
+        train(nitrom, n_epochs=epochs_bases, lr=1.0, optimizer_type="lbfgs", print_every=1, tol=1e-14)
+        all_nitrom_loss.extend(nitrom.loss_history)
+        all_nitrom_gradnorm.extend(nitrom.gradnorm_history)
         
-#         # Optimize operators only
-#         printr("    Optimizing operators...")
-#         set_optimize_operators(nitrom)
-#         train(nitrom, n_epochs=epochs_operators, lr=1.0, optimizer_type="lbfgs", print_every=1, tol=1e-14)
-#         all_nitrom_loss.extend(nitrom.loss_history)
-#         all_nitrom_gradnorm.extend(nitrom.gradnorm_history)
+        # Optimize operators only
+        printr("    Optimizing operators...")
+        set_optimize_operators(nitrom)
+        train(nitrom, n_epochs=epochs_operators, lr=1.0, optimizer_type="lbfgs", print_every=1, tol=1e-14)
+        all_nitrom_loss.extend(nitrom.loss_history)
+        all_nitrom_gradnorm.extend(nitrom.gradnorm_history)
 
-# nitrom_time = time.perf_counter() - t0
-# printr(f"training time: {nitrom_time:.4f} s")
-# printr(f"final cost:   {gcost(nitrom):.6e}")
+nitrom_time = time.perf_counter() - t0
+printr(f"training time: {nitrom_time:.4f} s")
+printr(f"final cost:   {gcost(nitrom):.6e}")
 
-# nitrom._sync_to_registry()
-# if rank == 0:
-#     save_checkpoint(
-#         nitrom_model.get_params(), "nitrom",
-#         os.path.join(models_dir, "nitrom_model.pkl"),
-#         nitrom.projection.Phi, nitrom.projection.Psi,
-#     )
+nitrom._sync_to_registry()
+if rank == 0:
+    save_checkpoint(
+        nitrom_model.get_params(), "nitrom",
+        os.path.join(models_dir, "nitrom_model.pkl"),
+        nitrom.projection.Phi, nitrom.projection.Psi,
+    )
 
-# nitrom_loss = np.array(all_nitrom_loss)
-# nitrom_gradnorm = np.array(all_nitrom_gradnorm)
-# nitrom_iters = np.arange(len(nitrom_loss))
-# nitrom_dict = {
-#     "iters": nitrom_iters,
-#     "loss": nitrom_loss,
-#     "gradnorm": nitrom_gradnorm,
-#     "time": nitrom_time
-# }
-# if rank == 0:
-#     with open(os.path.join(models_dir, "nitrom_history.pkl"), "wb") as f:
-#         pickle.dump(nitrom_dict, f)
+nitrom_loss = np.array(all_nitrom_loss)
+nitrom_gradnorm = np.array(all_nitrom_gradnorm)
+nitrom_iters = np.arange(len(nitrom_loss))
+nitrom_dict = {
+    "iters": nitrom_iters,
+    "loss": nitrom_loss,
+    "gradnorm": nitrom_gradnorm,
+    "time": nitrom_time
+}
+if rank == 0:
+    with open(os.path.join(models_dir, "nitrom_history.pkl"), "wb") as f:
+        pickle.dump(nitrom_dict, f)
 
 # # %% 2) Train GAS-NiTROM
 printr(f"\n=== GAS-NiTROM (initialized from {init_model}) ===")
@@ -266,6 +270,7 @@ td_gas_init = TrainingData(
     percent_time_length=0.05,
     leggauss_deg=5,
     nsave_rom=15,
+    num_shifts=num_shifts,
 )
 gas_nitrom = NitromModule(td_gas_init, registry_gas, fom=fom, n_substeps=15, adjoint_method='discrete')
 gas_nitrom.set_manifold_types(["Phi", "Psi"], ["grassmann", "stiefel"])
@@ -286,6 +291,7 @@ for p_idx, percent in enumerate(percents):
         percent_time_length=percent,
         leggauss_deg=5,
         nsave_rom=15,
+        num_shifts=num_shifts,
     )
     update_module_training_data(gas_nitrom, td_slice)
     

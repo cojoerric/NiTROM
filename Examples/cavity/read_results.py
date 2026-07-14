@@ -245,7 +245,7 @@ save_figure(fig, f'cavity_50_error_{which}_full')
 # --- 3) Sinusoidal Forcing ---
 time_np = dt_orig * np.arange(0, 80 * n, 1)
 nsave = 5
-amp = 0.9
+amp = 0.7
 energies = []
 ks = [1, 2, 4]
 

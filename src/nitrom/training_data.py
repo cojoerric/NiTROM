@@ -197,11 +197,54 @@ class TrainingData:
         n_keep = max(1, int(percent_time_length * n_snapshots_total))
         self.time = pool.time[:n_keep]
 
+        num_shifts = kwargs.get("num_shifts", 1)
+        if num_shifts < 1:
+            raise ValueError("num_shifts must be >= 1")
+
         if len(self.local_trajs) > 0:
-            self.X = pool.X[self.local_trajs, :, :n_keep]
-            self.dX = pool.dX[self.local_trajs, :, :n_keep]
-            self.forcing_fns = [pool.forcing_fns[i] for i in self.local_trajs] if pool.forcing_fns else []
-            self.weights = pool.weights[self.local_trajs]
+            if num_shifts == 1:
+                self.X = pool.X[self.local_trajs, :, :n_keep]
+                self.dX = pool.dX[self.local_trajs, :, :n_keep]
+                self.forcing_fns = [pool.forcing_fns[i] for i in self.local_trajs] if pool.forcing_fns else []
+                self.weights = pool.weights[self.local_trajs]
+            else:
+                max_start_idx = n_snapshots_total - n_keep
+                if max_start_idx < 0:
+                    raise ValueError(
+                        f"n_keep ({n_keep}) is larger than n_snapshots_total ({n_snapshots_total})"
+                    )
+                # Evenly space the start indices
+                start_indices = np.linspace(0, max_start_idx, num_shifts, dtype=int)
+                
+                X_list = []
+                dX_list = []
+                forcing_fns_list = []
+                weights_list = []
+                
+                for start_idx in start_indices:
+                    X_slice = pool.X[self.local_trajs, :, start_idx : start_idx + n_keep]
+                    dX_slice = pool.dX[self.local_trajs, :, start_idx : start_idx + n_keep]
+                    
+                    X_list.append(X_slice)
+                    dX_list.append(dX_slice)
+                    
+                    if pool.forcing_fns:
+                        shift_time = float(pool.time[start_idx] - pool.time[0])
+                        for i in self.local_trajs:
+                            fn = pool.forcing_fns[i]
+                            if fn is not None:
+                                def make_shifted_fn(original_fn, t_shift):
+                                    return lambda t: original_fn(t + t_shift)
+                                forcing_fns_list.append(make_shifted_fn(fn, shift_time))
+                            else:
+                                forcing_fns_list.append(None)
+                    
+                    weights_list.append(pool.weights[self.local_trajs])
+                
+                self.X = bkend.concatenate(X_list, axis=0)
+                self.dX = bkend.concatenate(dX_list, axis=0)
+                self.forcing_fns = forcing_fns_list
+                self.weights = bkend.concatenate(weights_list, axis=0)
         else:
             shape = (0, pool.N, n_keep)
             self.X = bkend.zeros(shape, device=pool.device, dtype=pool.dtype)
@@ -220,7 +263,7 @@ class TrainingData:
 
         # Scale the weights so the cost measures the average error over
         # snapshots and trajectories.
-        self.weights = self.weights * (len(self.global_trajs) * self.n_snapshots)
+        self.weights = self.weights * (len(self.global_trajs) * num_shifts * self.n_snapshots)
 
         # Parse the keyword arguments
         self.which_fix = kwargs.get("which_fix", "fix_none")

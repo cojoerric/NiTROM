@@ -107,3 +107,31 @@ def test_autodetected_sharding(data_dir, monkeypatch, rank, size, expected):
     assert (pool.rank, pool.world_size) == (rank, size)
     assert pool.traj_indices == expected
     assert pool.my_n_traj == len(expected)
+
+
+def test_training_data_time_shifting(data_dir):
+    """Test that time-shifted windows are correctly extracted, concatenated, and aligned."""
+    pool = _pool(data_dir)
+    num_shifts = 3
+    td = training_data.TrainingData(
+        pool,
+        which_trajs=list(range(N_TRAJ)),
+        percent_time_length=0.5,
+        leggauss_deg=5,
+        nsave_rom=15,
+        num_shifts=num_shifts,
+    )
+    
+    # 4 trajectories * 3 shifts = 12 trajectories
+    # n_keep = max(1, int(0.5 * 7)) = 3 snapshots
+    assert td.X.shape == (12, N, 3)
+    assert td.dX.shape == (12, N, 3)
+    assert len(td.weights) == 12
+    
+    # Max start index is 7 - 3 = 4.
+    # Start indices are [0, 2, 4].
+    # Verification of matching slices:
+    np.testing.assert_array_equal(td.X[0:4], pool.X[:, :, 0:3])
+    np.testing.assert_array_equal(td.X[4:8], pool.X[:, :, 2:5])
+    np.testing.assert_array_equal(td.X[8:12], pool.X[:, :, 4:7])
+
