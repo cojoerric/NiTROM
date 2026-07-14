@@ -21,8 +21,7 @@ rank, world_size = mpi_rank_size()
 traj_path = "./trajectories/"
 models_dir = "./models/"
 r = 50  # reduced dimension
-poly_comp = [1, 2]
-num_shifts = 3  # number of time shifts for training data augmentation
+shift_start_times = (0.0, 2.5, 5.0)  # custom start times for each shift window
 
 # Initialization model for GAS-NiTROM: "galerkin", "gas_opinf", or "nitrom".
 init_model = "gas_opinf"
@@ -118,7 +117,7 @@ pool = TrainingPool(
     dtype=dtype,
     fname_weights=traj_path + "weight_%03d.npy",
     fname_derivs=traj_path + "deriv_%03d.npy",
-    num_shifts=num_shifts,
+    shift_start_times=shift_start_times,
 )
 
 # Compute POD basis (rank r) of the pre-projected snapshots (dimension 200)
@@ -132,7 +131,7 @@ training_data = TrainingData(
     percent_time_length=0.5,
     leggauss_deg=5,
     nsave_rom=15,
-    num_shifts=num_shifts,
+    shift_start_times=shift_start_times,
 )
 
 # Galerkin projection (Psi = Phi): (A_r, H_r)
@@ -160,7 +159,7 @@ td_init = TrainingData(
     percent_time_length=0.05,
     leggauss_deg=5,
     nsave_rom=15,
-    num_shifts=num_shifts,
+    shift_start_times=shift_start_times,
 )
 nitrom = NitromModule(td_init, registry, fom=fom, n_substeps=15, adjoint_method='discrete')
 nitrom.set_manifold_types(["Phi", "Psi"], ["grassmann", "stiefel"])
@@ -187,7 +186,7 @@ for p_idx, percent in enumerate(percents):
         percent_time_length=percent,
         leggauss_deg=5,
         nsave_rom=15,
-        num_shifts=num_shifts,
+        shift_start_times=shift_start_times,
     )
     update_module_training_data(nitrom, td_slice)
     
@@ -271,7 +270,7 @@ td_gas_init = TrainingData(
     percent_time_length=0.05,
     leggauss_deg=5,
     nsave_rom=15,
-    num_shifts=num_shifts,
+    shift_start_times=shift_start_times,
 )
 gas_nitrom = NitromModule(td_gas_init, registry_gas, fom=fom, n_substeps=15, adjoint_method='discrete')
 gas_nitrom.set_manifold_types(["Phi", "Psi"], ["grassmann", "stiefel"])
@@ -292,7 +291,7 @@ for p_idx, percent in enumerate(percents):
         percent_time_length=percent,
         leggauss_deg=5,
         nsave_rom=15,
-        num_shifts=num_shifts,
+        shift_start_times=shift_start_times,
     )
     update_module_training_data(gas_nitrom, td_slice)
     

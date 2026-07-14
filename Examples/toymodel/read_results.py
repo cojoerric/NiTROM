@@ -126,7 +126,7 @@ ax.set_xlabel(r"Time $t$")
 ax.set_ylabel(r"Average error $e(t)$")
 ax.set_title(rf"Step response (averaged over {n_test} trajectories)")
 ax.set_xlim(t0, tf)
-ax.set_ylim(top=1e-1)
+ax.set_ylim(top=1e-1, bottom=1e-7)
 ax.legend()
 
 figures_dir = "figures"

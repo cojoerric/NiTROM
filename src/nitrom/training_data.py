@@ -73,7 +73,12 @@ class TrainingPool:
             # Keep COMM_WORLD around for numpy collectives (None if MPI absent).
             self.comm = mpi_comm_world() if self.backend.is_numpy else None
 
-        self.num_shifts = int(kwargs.get("num_shifts", 1))
+        self.shift_start_times = kwargs.get("shift_start_times", None)
+        if self.shift_start_times is not None:
+            self.num_shifts = len(self.shift_start_times)
+        else:
+            self.num_shifts = int(kwargs.get("num_shifts", 1))
+
         if self.num_shifts < 1:
             raise ValueError("num_shifts must be >= 1")
 
@@ -194,7 +199,10 @@ class TrainingData:
         self.backend = pool.backend
         bkend = self.backend
 
+        shift_start_times = kwargs.get("shift_start_times", getattr(pool, "shift_start_times", None))
         num_shifts = kwargs.get("num_shifts", pool.num_shifts)
+        if shift_start_times is not None:
+            num_shifts = len(shift_start_times)
         if num_shifts < 1:
             raise ValueError("num_shifts must be >= 1")
 
@@ -216,12 +224,25 @@ class TrainingData:
         self.time = pool.time[:n_keep]
 
         if len(self.local_trajs) > 0:
-            max_start_idx = n_snapshots_total - n_keep
-            if max_start_idx < 0:
-                raise ValueError(
-                    f"n_keep ({n_keep}) is larger than n_snapshots_total ({n_snapshots_total})"
-                )
-            start_indices = np.linspace(0, max_start_idx, num_shifts, dtype=int)
+            if shift_start_times is not None:
+                pool_time_np = bkend.to_numpy(pool.time)
+                start_indices = []
+                for t_s in shift_start_times:
+                    idx = int(np.argmin(np.abs(pool_time_np - t_s)))
+                    if idx + n_keep > n_snapshots_total:
+                        raise ValueError(
+                            f"Start time {t_s} corresponds to index {idx}, but the window "
+                            f"of width {n_keep} exceeds the total snapshots ({n_snapshots_total})."
+                        )
+                    start_indices.append(idx)
+                start_indices = np.array(start_indices, dtype=int)
+            else:
+                max_start_idx = n_snapshots_total - n_keep
+                if max_start_idx < 0:
+                    raise ValueError(
+                        f"n_keep ({n_keep}) is larger than n_snapshots_total ({n_snapshots_total})"
+                    )
+                start_indices = np.linspace(0, max_start_idx, num_shifts, dtype=int)
             
             X_list = []
             dX_list = []

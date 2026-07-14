@@ -127,7 +127,7 @@ gas_init = [*seed.get_params(), np.copy(opinf.B)]
 gas_model = GasPolynomialModel(
     r, poly_comp, dtype=dtype, gas_params=gas_init, forcing_config=forcing_config,
 )
-gas = OpInfModule(training_data, gas_model, projection, reg=1e-12)
+gas = OpInfModule(training_data, gas_model, projection, reg=0.0)
 gas.set_unlearnable("B")  # B = Phi^T B_fom is fixed, not trained
 printr(f"initial cost: {gcost(gas):.6e}")
 t0 = time.perf_counter()

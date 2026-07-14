@@ -275,6 +275,10 @@ ax.plot(t_eval, y_nit_low[0, :], color=COLORS["nitrom"], linestyle=STYLES["notga
 ax.plot(t_eval, y_oi_gs_low[0, :], color=COLORS["opinf"], linestyle=STYLES["gas"], label='GasOpInf')
 ax.plot(t_eval, y_nit_gs_low[0, :], color=COLORS["nitrom"], linestyle=STYLES["gas"], label='GasNiTROM')
 style_axes(ax, xlabel='Time $t$', ylabel='$y(t)$', xlim=(0.0, 30.0), ylim=(-1.0, 9.0))
+ax.xaxis.label.set_fontsize(16)
+ax.xaxis.set_tick_params(labelsize=16)
+ax.yaxis.label.set_fontsize(16)
+ax.yaxis.set_tick_params(labelsize=16)
 save_figure(fig, 'response_toymodel_low_30')
 
 # --- 3) Dynamic Response (High Input) ---
@@ -348,6 +352,10 @@ style_axes(
     xlim=(0.0, 30.0),
     ylim=(y_fom_high[0, :].min() * 2, 12.0),
 )
+ax.xaxis.label.set_fontsize(16)
+ax.xaxis.set_tick_params(labelsize=16)
+ax.yaxis.label.set_fontsize(16)
+ax.yaxis.set_tick_params(labelsize=16)
 save_figure(fig, 'response_toymodel_high_30')
 
 # --- 4) Training History Plots ---
@@ -400,7 +408,7 @@ ax.semilogy(hist_nitrom["iters"], hist_nitrom["gradnorm"], label='NiTROM', color
 ax.semilogy(hist_gas_nitrom["iters"], hist_gas_nitrom["gradnorm"], label='GasNiTROM', color=COLORS["nitrom"], linestyle=STYLES["gas"], linewidth=1.0)
 ax.semilogy(hist_gas_opinf["iters"], hist_gas_opinf["gradnorm"], label='GasOpInf', color=COLORS["opinf"], linestyle=STYLES["gas"], linewidth=1.0)
 style_axes(ax, xlabel='Iteration', ylabel='Gradient Norm', log_y=True)
-ax.legend(loc='lower right')
+# ax.legend(loc='lower right')
 
 save_figure(fig, 'gradnorm_history_toymodel')
 

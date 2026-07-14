@@ -30,7 +30,7 @@ poly_comp = [1, 2]
 # Initialization model for GAS-NiTROM: "galerkin", "gas_opinf", or "nitrom".
 # "gas_opinf" requires train_opinf.py to have been run first (writes
 # ./models/gas_opinf_model.pkl).
-init_model = "galerkin"
+init_model = "gas_opinf"
 
 if rank == 0:
     os.makedirs(models_dir, exist_ok=True)
@@ -174,7 +174,7 @@ else:
     tensors = [np.asarray(t, dtype=dtype) for t in ckpt["tensors"]]
     # Retract the general operator tensors (A, H) onto the GAS manifold.
     seed = GasPolynomialModel(r, poly_comp, dtype=dtype)
-    seed.retract_general_tensors_to_gas_tensors(tensors[:2], optimize_F=True, F_cond_penalty=1e-2)
+    seed.retract_general_tensors_to_gas_tensors(tensors[:2])
     gas_init = [*seed.get_params(), np.copy(tensors[2])]
 
 gas_nitrom_model = GasPolynomialModel(

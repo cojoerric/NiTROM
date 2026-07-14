@@ -34,8 +34,6 @@ pool = TrainingPool(
     fname_derivs=traj_path + "deriv_%03d.npy",
 )
 
-n_snap = pool.n_snapshots
-
 # Compute POD basis
 U, _, _ = compute_POD(pool, normalize=True)
 Phi = U[:, :r]  # (N, r)
@@ -99,13 +97,13 @@ def time_module(module, name, num_calls=50):
     t0 = time.perf_counter()
     for _ in range(num_calls):
         _ = module()
-    t_cost = (time.perf_counter() - t0) / num_calls / n_traj / n_snap
+    t_cost = (time.perf_counter() - t0) / num_calls
 
     # Time gradient evaluations
     t0 = time.perf_counter()
     for _ in range(num_calls):
         _ = module.gradient()
-    t_grad = (time.perf_counter() - t0) / num_calls / n_traj / n_snap
+    t_grad = (time.perf_counter() - t0) / num_calls
 
     print(f"{name:<12} | {t_cost:12.6e} | {t_grad:12.6e}")
     return t_cost, t_grad
@@ -120,12 +118,3 @@ if __name__ == "__main__":
     cost_gasopinf, grad_gasopinf = time_module(gasopinf, "GasOpInf", num_calls)
     cost_nitrom, grad_nitrom = time_module(nitrom, "NiTROM", num_calls)
     cost_gasnitrom, grad_gasnitrom = time_module(gasnitrom, "GasNiTROM", num_calls)
-    # all_times = {
-    #     "cost_gasopinf": cost_gasopinf,
-    #     "grad_gasopinf": grad_gasopinf,
-    #     "cost_nitrom": cost_nitrom,
-    #     "grad_nitrom": grad_nitrom,
-    #     "cost_gasnitrom": cost_gasnitrom,
-    #     "grad_gasnitrom": grad_gasnitrom,
-    # }
-    # np.save("modules/all_timings.npy", all_times)

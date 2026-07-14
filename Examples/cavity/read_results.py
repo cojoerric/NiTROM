@@ -245,7 +245,7 @@ save_figure(fig, f'cavity_50_error_{which}_full')
 # --- 3) Sinusoidal Forcing ---
 time_np = dt_orig * np.arange(0, 80 * n, 1)
 nsave = 5
-amp = 0.7
+amp = 0.1
 energies = []
 ks = [1, 2, 4]
 
@@ -334,6 +334,10 @@ for k in range(len(energies)):
         ax[k].set_ylim(0, energies[k][-2].max()*1.1)
     else:
         ax[k].set_ylim(0, energies[k][-1].max()*1.1)
+    ax[k].xaxis.label.set_fontsize(16)
+    ax[k].xaxis.set_tick_params(labelsize=16)
+    ax[k].yaxis.label.set_fontsize(16)
+    ax[k].yaxis.set_tick_params(labelsize=16)
 
 save_figure(fig, f"cavity_50_forcing_{amp_str}_energy")
 
@@ -390,6 +394,10 @@ for idx_subplot, (ax, (title, state_vec)) in enumerate(zip(axes, snapshots)):
         ha='center', va='bottom',
         fontsize=20,
     )
+    ax.xaxis.label.set_fontsize(16)
+    ax.xaxis.set_tick_params(labelsize=16)
+    ax.yaxis.label.set_fontsize(16)
+    ax.yaxis.set_tick_params(labelsize=16)
 
 save_figure(fig, f"cavity_50_forcing_{amp_str}_k{ks[-1]}_snapshot_all")
 

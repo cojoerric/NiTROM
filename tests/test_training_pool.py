@@ -111,38 +111,39 @@ def test_autodetected_sharding(data_dir, monkeypatch, rank, size, expected):
 
 def test_training_data_time_shifting(data_dir):
     """Test that time-shifted windows are correctly extracted, concatenated, and aligned."""
-    num_shifts = 3
-    pool = _pool(data_dir, num_shifts=num_shifts)
+    # times in pool.time: [0.0, 0.1667, 0.3333, 0.5, 0.6667, 0.8333, 1.0]
+    shift_start_times = (0.0, 0.3333, 0.6667)
+    pool = _pool(data_dir, shift_start_times=shift_start_times)
     td = training_data.TrainingData(
         pool,
         which_trajs=list(range(N_TRAJ)),
-        percent_time_length=0.5,
+        percent_time_length=0.4,
         leggauss_deg=5,
         nsave_rom=15,
     )
     
     # 4 trajectories * 3 shifts = 12 trajectories
-    # n_keep = max(1, int(0.5 * 7)) = 3 snapshots
-    assert td.X.shape == (12, N, 3)
-    assert td.dX.shape == (12, N, 3)
+    # n_keep = max(1, int(0.4 * 7)) = 2 snapshots
+    assert td.X.shape == (12, N, 2)
+    assert td.dX.shape == (12, N, 2)
     assert len(td.weights) == 12
     
-    # Max start index is 7 - 3 = 4.
-    # Start indices are [0, 2, 4].
+    # Start times map to closest indices:
+    # 0.0 -> index 0 (slice 0:2)
+    # 0.3333 -> index 2 (slice 2:4)
+    # 0.6667 -> index 4 (slice 4:6)
     # Verification of matching slices:
-    np.testing.assert_array_equal(td.X[0], pool.X[0, :, 0:3])
-    np.testing.assert_array_equal(td.X[1], pool.X[1, :, 2:5])
-    np.testing.assert_array_equal(td.X[2], pool.X[2, :, 4:7])
-    np.testing.assert_array_equal(td.X[3], pool.X[3, :, 0:3])
+    np.testing.assert_array_equal(td.X[0], pool.X[0, :, 0:2])
+    np.testing.assert_array_equal(td.X[1], pool.X[1, :, 2:4])
+    np.testing.assert_array_equal(td.X[2], pool.X[2, :, 4:6])
+    np.testing.assert_array_equal(td.X[3], pool.X[3, :, 0:2])
 
 
 def test_training_pool_sharding_virtual(data_dir, monkeypatch):
     """Test that TrainingPool shards virtual trajectories correctly when world_size > physical n_traj."""
-    # Physical N_TRAJ = 4, num_shifts = 3. Total virtual = 12.
-    # Suppose we run with 12 ranks (world_size = 12).
-    # Rank 5 should own virtual index 5, which maps to physical index 5 // 3 = 1.
+    # Physical N_TRAJ = 4, len(shift_start_times) = 3. Total virtual = 12.
     monkeypatch.setattr(training_data, "distributed_rank_size", lambda: (5, 12))
-    pool = _pool(data_dir, num_shifts=3)
+    pool = _pool(data_dir, shift_start_times=(0.0, 0.33, 0.66))
     assert pool.rank == 5
     assert pool.world_size == 12
     assert pool.traj_indices == [5]
