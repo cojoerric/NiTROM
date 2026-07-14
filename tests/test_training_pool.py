@@ -111,15 +111,14 @@ def test_autodetected_sharding(data_dir, monkeypatch, rank, size, expected):
 
 def test_training_data_time_shifting(data_dir):
     """Test that time-shifted windows are correctly extracted, concatenated, and aligned."""
-    pool = _pool(data_dir)
     num_shifts = 3
+    pool = _pool(data_dir, num_shifts=num_shifts)
     td = training_data.TrainingData(
         pool,
         which_trajs=list(range(N_TRAJ)),
         percent_time_length=0.5,
         leggauss_deg=5,
         nsave_rom=15,
-        num_shifts=num_shifts,
     )
     
     # 4 trajectories * 3 shifts = 12 trajectories
@@ -131,7 +130,24 @@ def test_training_data_time_shifting(data_dir):
     # Max start index is 7 - 3 = 4.
     # Start indices are [0, 2, 4].
     # Verification of matching slices:
-    np.testing.assert_array_equal(td.X[0:4], pool.X[:, :, 0:3])
-    np.testing.assert_array_equal(td.X[4:8], pool.X[:, :, 2:5])
-    np.testing.assert_array_equal(td.X[8:12], pool.X[:, :, 4:7])
+    np.testing.assert_array_equal(td.X[0], pool.X[0, :, 0:3])
+    np.testing.assert_array_equal(td.X[1], pool.X[1, :, 2:5])
+    np.testing.assert_array_equal(td.X[2], pool.X[2, :, 4:7])
+    np.testing.assert_array_equal(td.X[3], pool.X[3, :, 0:3])
+
+
+def test_training_pool_sharding_virtual(data_dir, monkeypatch):
+    """Test that TrainingPool shards virtual trajectories correctly when world_size > physical n_traj."""
+    # Physical N_TRAJ = 4, num_shifts = 3. Total virtual = 12.
+    # Suppose we run with 12 ranks (world_size = 12).
+    # Rank 5 should own virtual index 5, which maps to physical index 5 // 3 = 1.
+    monkeypatch.setattr(training_data, "distributed_rank_size", lambda: (5, 12))
+    pool = _pool(data_dir, num_shifts=3)
+    assert pool.rank == 5
+    assert pool.world_size == 12
+    assert pool.traj_indices == [5]
+    assert pool.my_n_traj == 1
+    # File loaded should be traj_001.npy (physical trajectory 1)
+    assert "traj_001.npy" in pool.fnames_traj[0]
+
 

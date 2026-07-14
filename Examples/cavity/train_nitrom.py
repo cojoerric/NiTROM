@@ -118,6 +118,7 @@ pool = TrainingPool(
     dtype=dtype,
     fname_weights=traj_path + "weight_%03d.npy",
     fname_derivs=traj_path + "deriv_%03d.npy",
+    num_shifts=num_shifts,
 )
 
 # Compute POD basis (rank r) of the pre-projected snapshots (dimension 200)

@@ -55,7 +55,7 @@ class TrainingPool:
         dtype: Any = None,
         device: str = "cpu",
         comm: Any = None,
-        **kwargs: str,
+        **kwargs: Any,
     ) -> None:
         self.backend = get_backend()
         self.dtype = dtype if dtype is not None else self.backend.float32
@@ -73,26 +73,31 @@ class TrainingPool:
             # Keep COMM_WORLD around for numpy collectives (None if MPI absent).
             self.comm = mpi_comm_world() if self.backend.is_numpy else None
 
-        if n_traj <= 0:
+        self.num_shifts = int(kwargs.get("num_shifts", 1))
+        if self.num_shifts < 1:
+            raise ValueError("num_shifts must be >= 1")
+
+        n_virtual = n_traj * self.num_shifts
+        if n_virtual <= 0:
             raise ValueError(
                 f"n_traj must be a positive integer. Currently, n_traj = {n_traj}."
             )
-        self.n_traj = n_traj
+        self.n_traj = n_virtual
         self.is_distributed = self.world_size > 1
 
-        # Distribute trajectories across ranks
-        self.my_n_traj = n_traj // self.world_size
-        self.my_n_traj += 1 if self.rank < n_traj % self.world_size else 0
+        # Distribute virtual trajectories across ranks
+        self.my_n_traj = n_virtual // self.world_size
+        self.my_n_traj += 1 if self.rank < n_virtual % self.world_size else 0
 
         if self.my_n_traj == 0:
             raise ValueError("Every rank needs to own at least one trajectory")
 
-        start_idx = self.rank * (n_traj // self.world_size) + min(
-            self.rank, n_traj % self.world_size
+        start_idx = self.rank * (n_virtual // self.world_size) + min(
+            self.rank, n_virtual % self.world_size
         )
         self.traj_indices = list(range(start_idx, start_idx + self.my_n_traj))
 
-        # Load data from file
+        # Load data from file (mapping virtual indices to physical indices)
         self.load_trajectories(fname_traj)
         self.load_weights(kwargs)
         self.load_forcing(kwargs)
@@ -103,18 +108,18 @@ class TrainingPool:
 
     def load_trajectories(self, fname_traj: str) -> None:
         """Load trajectory snapshots from ``.npy`` files into :attr:`X`."""
-        self.fnames_traj = [fname_traj % k for k in self.traj_indices]
+        self.fnames_traj = [fname_traj % (k // self.num_shifts) for k in self.traj_indices]
         X = [np.load(f) for f in self.fnames_traj]
         self.X = self.backend.asarray(
             np.stack(X), dtype=self.dtype, device=self.device
         )
         _, self.N, self.n_snapshots = self.X.shape
 
-    def load_weights(self, kwargs: dict[str, str]) -> None:
+    def load_weights(self, kwargs: dict[str, Any]) -> None:
         """Load per-trajectory importance weights (default: all ones)."""
         fname_weights: str | None = kwargs.get("fname_weights")
         if fname_weights is not None:
-            self.fnames_weights = [fname_weights % k for k in self.traj_indices]
+            self.fnames_weights = [fname_weights % (k // self.num_shifts) for k in self.traj_indices]
             weights = [np.load(f) for f in self.fnames_weights]
             self.weights = self.backend.asarray(
                 np.stack(weights).reshape(-1), dtype=self.dtype, device=self.device
@@ -124,11 +129,11 @@ class TrainingPool:
                 (self.my_n_traj,), dtype=self.dtype, device=self.device
             ) + 1.0
 
-    def load_forcing(self, kwargs: dict[str, str]) -> None:
+    def load_forcing(self, kwargs: dict[str, Any]) -> None:
         """Load per-trajectory forcing callables from pickle files."""
         fname_forcing: str | None = kwargs.get("fname_forcing")
         if fname_forcing is not None:
-            self.fnames_forcing = [fname_forcing % k for k in self.traj_indices]
+            self.fnames_forcing = [fname_forcing % (k // self.num_shifts) for k in self.traj_indices]
             self.forcing_fns: list[Callable] = []
             for f in self.fnames_forcing:
                 with open(f, "rb") as fh:
@@ -149,11 +154,11 @@ class TrainingPool:
 
         return wrapped
 
-    def load_time_derivatives(self, kwargs: dict[str, str]) -> None:
+    def load_time_derivatives(self, kwargs: dict[str, Any]) -> None:
         """Load precomputed time derivatives (default: zeros)."""
         fname_deriv: str | None = kwargs.get("fname_derivs")
         if fname_deriv is not None:
-            self.fnames_deriv = [fname_deriv % k for k in self.traj_indices]
+            self.fnames_deriv = [fname_deriv % (k // self.num_shifts) for k in self.traj_indices]
             dX = [np.load(f) for f in self.fnames_deriv]
             self.dX = self.backend.asarray(
                 np.stack(dX), dtype=self.dtype, device=self.device
@@ -189,6 +194,19 @@ class TrainingData:
         self.backend = pool.backend
         bkend = self.backend
 
+        num_shifts = kwargs.get("num_shifts", pool.num_shifts)
+        if num_shifts < 1:
+            raise ValueError("num_shifts must be >= 1")
+
+        # Automatically expand physical trajectory selections in which_trajs to virtual ones
+        physical_n_traj = pool.n_traj // pool.num_shifts
+        if all(0 <= t < physical_n_traj for t in which_trajs):
+            virtual_trajs = []
+            for t in which_trajs:
+                for s in range(num_shifts):
+                    virtual_trajs.append(t * num_shifts + s)
+            which_trajs = virtual_trajs
+
         self.global_trajs = which_trajs
         self.local_trajs = self._global_to_local_indices(which_trajs)
 
@@ -197,54 +215,44 @@ class TrainingData:
         n_keep = max(1, int(percent_time_length * n_snapshots_total))
         self.time = pool.time[:n_keep]
 
-        num_shifts = kwargs.get("num_shifts", 1)
-        if num_shifts < 1:
-            raise ValueError("num_shifts must be >= 1")
-
         if len(self.local_trajs) > 0:
-            if num_shifts == 1:
-                self.X = pool.X[self.local_trajs, :, :n_keep]
-                self.dX = pool.dX[self.local_trajs, :, :n_keep]
-                self.forcing_fns = [pool.forcing_fns[i] for i in self.local_trajs] if pool.forcing_fns else []
-                self.weights = pool.weights[self.local_trajs]
-            else:
-                max_start_idx = n_snapshots_total - n_keep
-                if max_start_idx < 0:
-                    raise ValueError(
-                        f"n_keep ({n_keep}) is larger than n_snapshots_total ({n_snapshots_total})"
-                    )
-                # Evenly space the start indices
-                start_indices = np.linspace(0, max_start_idx, num_shifts, dtype=int)
+            max_start_idx = n_snapshots_total - n_keep
+            if max_start_idx < 0:
+                raise ValueError(
+                    f"n_keep ({n_keep}) is larger than n_snapshots_total ({n_snapshots_total})"
+                )
+            start_indices = np.linspace(0, max_start_idx, num_shifts, dtype=int)
+            
+            X_list = []
+            dX_list = []
+            forcing_fns_list = []
+            
+            for local_idx in self.local_trajs:
+                g_idx = self.global_trajs[local_idx]
+                shift_idx = int(g_idx % num_shifts)
+                start_idx = start_indices[shift_idx]
                 
-                X_list = []
-                dX_list = []
-                forcing_fns_list = []
-                weights_list = []
+                # Use local_idx:local_idx+1 to preserve 3D shape (1, N, n_keep)
+                X_slice = pool.X[local_idx : local_idx + 1, :, start_idx : start_idx + n_keep]
+                dX_slice = pool.dX[local_idx : local_idx + 1, :, start_idx : start_idx + n_keep]
                 
-                for start_idx in start_indices:
-                    X_slice = pool.X[self.local_trajs, :, start_idx : start_idx + n_keep]
-                    dX_slice = pool.dX[self.local_trajs, :, start_idx : start_idx + n_keep]
-                    
-                    X_list.append(X_slice)
-                    dX_list.append(dX_slice)
-                    
-                    if pool.forcing_fns:
+                X_list.append(X_slice)
+                dX_list.append(dX_slice)
+                
+                if pool.forcing_fns:
+                    fn = pool.forcing_fns[local_idx]
+                    if fn is not None:
                         shift_time = float(pool.time[start_idx] - pool.time[0])
-                        for i in self.local_trajs:
-                            fn = pool.forcing_fns[i]
-                            if fn is not None:
-                                def make_shifted_fn(original_fn, t_shift):
-                                    return lambda t: original_fn(t + t_shift)
-                                forcing_fns_list.append(make_shifted_fn(fn, shift_time))
-                            else:
-                                forcing_fns_list.append(None)
-                    
-                    weights_list.append(pool.weights[self.local_trajs])
-                
-                self.X = bkend.concatenate(X_list, axis=0)
-                self.dX = bkend.concatenate(dX_list, axis=0)
-                self.forcing_fns = forcing_fns_list
-                self.weights = bkend.concatenate(weights_list, axis=0)
+                        def make_shifted_fn(original_fn, t_shift):
+                            return lambda t: original_fn(t + t_shift)
+                        forcing_fns_list.append(make_shifted_fn(fn, shift_time))
+                    else:
+                        forcing_fns_list.append(None)
+            
+            self.X = bkend.concatenate(X_list, axis=0)
+            self.dX = bkend.concatenate(dX_list, axis=0)
+            self.forcing_fns = forcing_fns_list
+            self.weights = pool.weights[self.local_trajs]
         else:
             shape = (0, pool.N, n_keep)
             self.X = bkend.zeros(shape, device=pool.device, dtype=pool.dtype)
@@ -263,7 +271,7 @@ class TrainingData:
 
         # Scale the weights so the cost measures the average error over
         # snapshots and trajectories.
-        self.weights = self.weights * (len(self.global_trajs) * num_shifts * self.n_snapshots)
+        self.weights = self.weights * (len(self.global_trajs) * self.n_snapshots)
 
         # Parse the keyword arguments
         self.which_fix = kwargs.get("which_fix", "fix_none")
