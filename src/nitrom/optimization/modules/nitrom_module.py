@@ -174,7 +174,18 @@ class NitromModule(InferenceModule):
             self._decode_trajectories(Z)
         )
         per_traj = bkend.sum(e * e, axis=(1, 2)) / self.weights.reshape(-1)
-        return per_traj.sum()
+        cost = per_traj.sum()
+
+        # Regularization on the quadratic tensor H
+        from nitrom.backend import distributed_rank_size
+        _, world_size = distributed_rank_size()
+        reg = self.reg / world_size
+        if reg > 0.0 and hasattr(self.model, "poly_comp") and 2 in self.model.poly_comp:
+            h_idx = self.model.poly_comp.index(2)
+            H = self.model.inner_params()[h_idx]
+            cost = cost + reg * bkend.vector_norm(H) ** 2
+
+        return cost
 
     def _vjp_rhs(self, z: Any, lam: Any, t: float) -> list:
         """VJP of the latent RHS w.r.t. the inner model parameters (forwards forcing)."""
@@ -353,6 +364,15 @@ class NitromModule(InferenceModule):
             lam = lam + src[:, :, 0]
             for k, g in enumerate(self.projection.vjp_encode(X[:, :, 0], lam)):
                 proj_grads[k] = proj_grads[k] + g
+
+            # Add regularization gradient on H if reg > 0.0
+            from nitrom.backend import distributed_rank_size
+            _, world_size = distributed_rank_size()
+            reg = self.reg / world_size
+            if reg > 0.0 and hasattr(self.model, "poly_comp") and 2 in self.model.poly_comp:
+                h_idx = self.model.poly_comp.index(2)
+                H = self.model.inner_params()[h_idx]
+                model_grads[h_idx] = model_grads[h_idx] + 2.0 * reg * H
 
             # --- assemble in registry order, summing shared contributions --
             model_grads = self.model.project_inner_gradients(model_grads)

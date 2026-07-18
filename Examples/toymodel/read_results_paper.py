@@ -190,14 +190,81 @@ for k in range(len(betas)):
     y_nit_gs = fom.compute_output(sol_nit_gs)
     error_nit_gs += np.linalg.norm(y_nit_gs - y_fom, axis=0) ** 2 / weight / len(betas)
 
+
+# --- 1a) Average Training Error ---
+betas_train = np.array([0.01, 0.1, 0.2, 0.248], dtype=dtype)
+t_eval_train = t_eval[:idx_10]
+t0_train, tf_train = float(t_eval_train[0]), float(t_eval_train[-1])
+dt_train = float((t_eval_train[1] - t_eval_train[0]) / 10)
+
+error_pod_train = np.zeros_like(t_eval_train)
+error_oi_train = np.zeros_like(t_eval_train)
+error_oi_gs_train = np.zeros_like(t_eval_train)
+error_nit_train = np.zeros_like(t_eval_train)
+error_nit_gs_train = np.zeros_like(t_eval_train)
+
+for k in range(len(betas_train)):
+    b = betas_train[k]
+    u_fom = b * np.ones(n, dtype=dtype)
+    x0 = np.zeros(n, dtype=dtype)
+    z0 = np.zeros(r, dtype=dtype)
+
+    sol = solve_ivp(fom.evaluate_fom_dynamics, x0, t0_train, tf_train, dt_train, t_eval_train, "rk45", u=u_fom, rtol=rtol, atol=atol)
+    y_fom = fom.compute_output(sol)
+
+    id_ss = np.array([-b / (-1 + 4 * b), -b / (-2 + 4 * b), b / 5], dtype=dtype)
+    weight = np.linalg.norm(fom.compute_output(id_ss)) ** 2
+
+    forcing_fns = [lambda t, val=b: np.array([val], dtype=dtype)]
+
+    sol_pod_r = solve_ivp(
+        rom_pod.evaluate_rhs, z0, t0_train, tf_train, dt_train, t_eval_train, "rk45",
+        external_forcing=forcing_fns, rtol=rtol, atol=atol
+    )
+    sol_pod = proj_pod.decode(sol_pod_r.T).T
+    y_pod = fom.compute_output(sol_pod)
+    error_pod_train += np.linalg.norm(y_pod - y_fom, axis=0) ** 2 / weight / len(betas_train)
+
+    sol_oi_r = solve_ivp(
+        rom_oi.evaluate_rhs, z0, t0_train, tf_train, dt_train, t_eval_train, "rk45",
+        external_forcing=forcing_fns, rtol=rtol, atol=atol
+    )
+    sol_oi = proj_oi.decode(sol_oi_r.T).T
+    y_oi = fom.compute_output(sol_oi)
+    error_oi_train += np.linalg.norm(y_oi - y_fom, axis=0) ** 2 / weight / len(betas_train)
+
+    sol_oi_gs_r = solve_ivp(
+        rom_oi_gs.evaluate_rhs, z0, t0_train, tf_train, dt_train, t_eval_train, "rk45",
+        external_forcing=forcing_fns, rtol=rtol, atol=atol
+    )
+    sol_oi_gs = proj_oi_gs.decode(sol_oi_gs_r.T).T
+    y_oi_gs = fom.compute_output(sol_oi_gs)
+    error_oi_gs_train += np.linalg.norm(y_oi_gs - y_fom, axis=0) ** 2 / weight / len(betas_train)
+
+    sol_nit_r = solve_ivp(
+        rom_nit.evaluate_rhs, z0, t0_train, tf_train, dt_train, t_eval_train, "rk45",
+        external_forcing=forcing_fns, rtol=rtol, atol=atol
+    )
+    sol_nit = proj_nit.decode(sol_nit_r.T).T
+    y_nit = fom.compute_output(sol_nit)
+    error_nit_train += np.linalg.norm(y_nit - y_fom, axis=0) ** 2 / weight / len(betas_train)
+
+    sol_nit_gs_r = solve_ivp(
+        rom_nit_gs.evaluate_rhs, z0, t0_train, tf_train, dt_train, t_eval_train, "rk45",
+        external_forcing=forcing_fns, rtol=rtol, atol=atol
+    )
+    sol_nit_gs = proj_nit_gs.decode(sol_nit_gs_r.T).T
+    y_nit_gs = fom.compute_output(sol_nit_gs)
+    error_nit_gs_train += np.linalg.norm(y_nit_gs - y_fom, axis=0) ** 2 / weight / len(betas_train)
+
 # Plot errors
 fig, ax = make_figure()
-ax.semilogy(t_eval[:idx_10], error_pod[:idx_10], label='POD-Gal.', color=COLORS["galerkin"], linestyle=STYLES["galerkin"])
-ax.semilogy(t_eval[:idx_10], error_oi[:idx_10], label='OpInf', color=COLORS["opinf"], linestyle=STYLES["notgas"])
-ax.semilogy(t_eval[:idx_10], error_oi_gs[:idx_10], label='GasOpInf', color=COLORS["opinf"], linestyle=STYLES["gas"])
-ax.semilogy(t_eval[:idx_10], error_nit[:idx_10], label='NiTROM', color=COLORS["nitrom"], linestyle=STYLES["notgas"])
-ax.semilogy(t_eval[:idx_10], error_nit_gs[:idx_10], label='GasNiTROM', color=COLORS["nitrom"], linestyle=STYLES["gas"])
-style_axes(ax, xlabel='Time $t$', ylabel='Average error $e(t)$', xlim=(0.0, 10.0), ylim=(None, 1e1), log_y=True)
+ax.semilogy(t_eval_train, error_pod_train, label='POD-Gal.', color=COLORS["galerkin"], linestyle=STYLES["galerkin"])
+ax.semilogy(t_eval_train, error_oi_train, label='OpInf', color=COLORS["opinf"], linestyle=STYLES["notgas"])
+ax.semilogy(t_eval_train, error_oi_gs_train, label='GasOpInf', color=COLORS["opinf"], linestyle=STYLES["gas"])
+ax.semilogy(t_eval_train, error_nit_train, label='NiTROM', color=COLORS["nitrom"], linestyle=STYLES["notgas"])
+ax.semilogy(t_eval_train, error_nit_gs_train, label='GasNiTROM', color=COLORS["nitrom"], linestyle=STYLES["gas"])
+style_axes(ax, xlabel='Time $t$', ylabel='Average error $e(t)$', xlim=(0.0, 10.0), ylim=(None, 1e-1), log_y=True)
 save_figure(fig, 'error_toymodel_10')
 
 fig, ax = make_figure(wide=True)
@@ -207,7 +274,7 @@ ax.semilogy(t_eval, error_oi_gs, label='GasOpInf', color=COLORS["opinf"], linest
 ax.semilogy(t_eval, error_nit, label='NiTROM', color=COLORS["nitrom"], linestyle=STYLES["notgas"])
 ax.semilogy(t_eval, error_nit_gs, label='GasNiTROM', color=COLORS["nitrom"], linestyle=STYLES["gas"])
 style_axes(ax, xlabel='Time $t$', ylabel='Average error $e(t)$', xlim=(0.0, 30.0), ylim=(None, 1e1), log_y=True)
-add_training_window(ax)
+# add_training_window(ax)
 ax.legend(loc='lower right', ncol=2, columnspacing=1.0, handletextpad=0.5)
 save_figure(fig, 'error_toymodel_30')
 
@@ -257,16 +324,6 @@ sol_nit_gs_r = solve_ivp(
 y_nit_gs_low = fom.compute_output(proj_nit_gs.decode(sol_nit_gs_r.T).T)
 
 # Plot low response
-fig, ax = make_figure()
-ax.plot(t_eval[:idx_10], y_fom_low[0, :idx_10], color='k', linewidth=2.4, label='FOM')
-ax.plot(t_eval[:idx_10], y_pod_low[0, :idx_10], color=COLORS["galerkin"], linestyle=STYLES["galerkin"], label='POD-Gal.')
-ax.plot(t_eval[:idx_10], y_nit_low[0, :idx_10], color=COLORS["nitrom"], linestyle=STYLES["notgas"], label='NiTROM')
-ax.plot(t_eval[:idx_10], y_nit_gs_low[0, :idx_10], color=COLORS["nitrom"], linestyle=STYLES["gas"], label='GasNiTROM')
-ax.plot(t_eval[:idx_10], y_oi_low[0, :idx_10], color=COLORS["opinf"], linestyle=STYLES["notgas"], label='OpInf')
-ax.plot(t_eval[:idx_10], y_oi_gs_low[0, :idx_10], color=COLORS["opinf"], linestyle=STYLES["gas"], label='GasOpInf')
-style_axes(ax, xlabel='Time $t$', ylabel='$y(t)$', xlim=(0.0, 10.0), ylim=(-1.0, 9.0))
-save_figure(fig, 'response_toymodel_low_10')
-
 fig, ax = make_figure(wide=True)
 ax.plot(t_eval, y_fom_low[0, :], color='k', linewidth=2.4, label='FOM')
 ax.plot(t_eval, y_pod_low[0, :], color=COLORS["galerkin"], linestyle=STYLES["galerkin"], label='POD-Gal.')
@@ -319,25 +376,6 @@ sol_nit_gs_r = solve_ivp(
 y_nit_gs_high = fom.compute_output(proj_nit_gs.decode(sol_nit_gs_r.T).T)
 
 # Plot high response
-fig, ax = make_figure()
-ax.plot(t_eval[:idx_10], y_fom_high[0, :idx_10], color='k', linewidth=2.4, label='FOM')
-ax.plot(t_eval[:idx_10], y_pod_high[0, :idx_10], color=COLORS["galerkin"], linestyle=STYLES["galerkin"], label='POD-Gal.')
-ax.plot(t_eval[:idx_10], y_nit_high[0, :idx_10], color=COLORS["nitrom"], linestyle=STYLES["notgas"], label='NiTROM')
-ax.plot(t_eval[:idx_10], y_nit_gs_high[0, :idx_10], color=COLORS["nitrom"], linestyle=STYLES["gas"], label='GasNiTROM')
-ax.plot(t_eval[:idx_10], y_oi_high[0, :idx_10], color=COLORS["opinf"], linestyle=STYLES["notgas"], label='OpInf')
-ax.plot(t_eval[:idx_10], y_oi_gs_high[0, :idx_10], color=COLORS["opinf"], linestyle=STYLES["gas"], label='GasOpInf')
-style_axes(
-    ax,
-    xlabel='Time $t$',
-    ylabel='$y(t)$',
-    xlim=(0.0, 10.0),
-    ylim=(
-        y_fom_high[0, :idx_10].min() * 2,
-        y_fom_high[0, :idx_10].max() * 2.5,
-    ),
-)
-save_figure(fig, 'response_toymodel_high_10')
-
 fig, ax = make_figure(wide=True)
 ax.plot(t_eval, y_fom_high[0, :], color='k', linewidth=2.4, label='FOM')
 ax.plot(t_eval, y_pod_high[0, :], color=COLORS["galerkin"], linestyle=STYLES["galerkin"], label='POD-Gal.')
@@ -404,9 +442,9 @@ save_figure(fig, 'cost_history_toymodel')
 
 # Gradient Norm vs Iteration Plot
 fig, ax = make_figure()
-ax.semilogy(hist_nitrom["iters"], hist_nitrom["gradnorm"], label='NiTROM', color=COLORS["nitrom"], linestyle=STYLES["notgas"], linewidth=1.0)
-ax.semilogy(hist_gas_nitrom["iters"], hist_gas_nitrom["gradnorm"], label='GasNiTROM', color=COLORS["nitrom"], linestyle=STYLES["gas"], linewidth=1.0)
-ax.semilogy(hist_gas_opinf["iters"], hist_gas_opinf["gradnorm"], label='GasOpInf', color=COLORS["opinf"], linestyle=STYLES["gas"], linewidth=1.0)
+ax.semilogy(hist_nitrom["iters"], hist_nitrom["gradnorm"], label='NiTROM', color=COLORS["nitrom"], linestyle=STYLES["notgas"])
+ax.semilogy(hist_gas_nitrom["iters"], hist_gas_nitrom["gradnorm"], label='GasNiTROM', color=COLORS["nitrom"], linestyle=STYLES["gas"])
+ax.semilogy(hist_gas_opinf["iters"], hist_gas_opinf["gradnorm"], label='GasOpInf', color=COLORS["opinf"], linestyle=STYLES["gas"])
 style_axes(ax, xlabel='Iteration', ylabel='Gradient Norm', log_y=True)
 # ax.legend(loc='lower right')
 

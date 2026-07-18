@@ -125,3 +125,40 @@ def test_gradient_gas_rom(adjoint_method, time_stepper):
     assert_grad_close(
         module.gradient(), finite_diff_grad(module), rtol=rtol_check, atol=atol_check
     )
+
+
+def test_nitrom_h_regularization():
+    # Verify that the forward loss matches the expected mathematical definition
+    g = torch.Generator().manual_seed(42)
+    tensors = [
+        0.3 * torch.randn(R, R, generator=g, dtype=DTYPE),
+        0.2 * torch.randn(R, R, R, generator=g, dtype=DTYPE),
+        0.3 * torch.randn(R, M, generator=g, dtype=DTYPE),
+    ]
+    model = PolynomialModel(
+        R, [1, 2], dtype=DTYPE, tensors=tensors,
+        forcing_config={"forcing_exists": True, "m": M},
+    )
+    
+    proj = _projection()
+    registry = ParamRegistry(model, proj)
+    
+    # Create module with reg = 0.0 and reg = 0.5
+    module_no_reg = NitromModule(
+        _data(), registry, fom=_fom(), reg=0.0,
+        n_substeps=10, time_stepper="rk4", adjoint_method="discrete"
+    )
+    module_with_reg = NitromModule(
+        _data(), registry, fom=_fom(), reg=0.5,
+        n_substeps=10, time_stepper="rk4", adjoint_method="discrete"
+    )
+    
+    loss_no_reg = module_no_reg()
+    loss_with_reg = module_with_reg()
+    
+    # Get H and check loss difference
+    H = model.A_2
+    expected_reg_term = 0.5 * torch.sum(H * H)
+    
+    assert torch.allclose(loss_with_reg, loss_no_reg + expected_reg_term, rtol=1e-6)
+

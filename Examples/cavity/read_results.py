@@ -98,7 +98,7 @@ B = fom.f.copy()  # shape (19700,)
 
 # Trajectory details
 traj_path = "./trajectories/"
-which = 'train'  # 'train' or 'test'
+which = 'test'  # 'train' or 'test'
 
 if which == 'train':
     fname_traj = traj_path + "traj_%03d.npy"
@@ -237,15 +237,16 @@ ax.semilogy(t_eval, error_oi, label='OpInf', color=COLORS["opinf"], linestyle=ST
 ax.semilogy(t_eval, error_oi_gs, label='GasOpInf', color=COLORS["opinf"], linestyle=STYLES["gas"])
 ax.semilogy(t_eval, error_nit, label='NiTROM', color=COLORS["nitrom"], linestyle=STYLES["notgas"])
 ax.semilogy(t_eval, error_nit_gs, label='GasNiTROM', color=COLORS["nitrom"], linestyle=STYLES["gas"])
-style_axes(ax, xlabel='Time $t$', ylabel='Error', xlim=(0.0, float(t_eval[-1])), ylim=(1e-3, 1e2), log_y=True)
-add_training_window(ax, x_end=float(t_eval[idx_final]))
+style_axes(ax, xlabel='Time $t$', ylabel='Error', xlim=(0.0, float(t_eval[-1])), ylim=(1e-3, 1e3), log_y=True)
+if which == 'train':
+    add_training_window(ax, x_end=float(t_eval[idx_final]))
 ax.legend(loc='upper right', ncol=3, columnspacing=1.0, handletextpad=0.5)
 save_figure(fig, f'cavity_50_error_{which}_full')
 
 # --- 3) Sinusoidal Forcing ---
 time_np = dt_orig * np.arange(0, 80 * n, 1)
 nsave = 5
-amp = 0.1
+amp = 0.9
 energies = []
 ks = [1, 2, 4]
 
@@ -329,7 +330,7 @@ for k in range(len(energies)):
     style_axes(ax[k], xlabel='' if k < 2 else r'Time $t$', ylabel='Energy' if k == 1 else '', xlim=(0.0, tsavef[-1]))
     ax[k].grid(which="minor", visible=False)
     if k == 0:
-        ax[k].set_ylim(bottom=0)
+        ax[k].set_ylim(0, energies[k][-2].max()*1.1)
     elif k == 1:
         ax[k].set_ylim(0, energies[k][-2].max()*1.1)
     else:
@@ -363,9 +364,9 @@ axes = axes.ravel()
 
 for idx_subplot, (ax, (title, state_vec)) in enumerate(zip(axes, snapshots)):
     X, Y, fields = pp.output_fields(flow, state_vec)
-    if (title == "NiTROM" or title == "POD-Gal.") and amp_str == '0p9':
-        fields[ii] = np.zeros_like(fields[ii])
-        title += " (blew up)"
+    # if title == "POD-Gal." and amp_str == '0p9':
+    #     fields[ii] = np.zeros_like(fields[ii])
+    #     title += " (blew up)"
     cf = ax.contourf(
         X[ii][:39, :],
         Y[ii][:39, :],
@@ -446,7 +447,7 @@ ax.semilogy(hist_nitrom["iters"], hist_nitrom["gradnorm"], label='NiTROM', color
 ax.semilogy(hist_gas_nitrom["iters"], hist_gas_nitrom["gradnorm"], label='GasNiTROM', color=COLORS["nitrom"], linestyle=STYLES["gas"], linewidth=1.0)
 ax.semilogy(hist_gas_opinf["iters"], hist_gas_opinf["gradnorm"], label='GasOpInf', color=COLORS["opinf"], linestyle=STYLES["gas"], linewidth=1.0)
 style_axes(ax, xlabel='Iteration', ylabel='Gradient Norm', log_y=True)
-ax.legend(loc='upper right')
+# ax.legend(loc='upper right')
 
 save_figure(fig, 'gradnorm_history_cavity')
 
