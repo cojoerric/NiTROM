@@ -98,7 +98,7 @@ B = fom.f.copy()  # shape (19700,)
 
 # Trajectory details
 traj_path = "./trajectories/"
-which = 'test'  # 'train' or 'test'
+which = 'train'  # 'train' or 'test'
 
 if which == 'train':
     fname_traj = traj_path + "traj_%03d.npy"
@@ -262,6 +262,16 @@ sol_nit_gs = None
 dataf = None
 tsavef = None
 
+# For tracking contour plot simulation snapshot
+harmonic_contour = 1
+sol_pod_contour = None
+sol_oi_contour = None
+sol_oi_gs_contour = None
+sol_nit_contour = None
+sol_nit_gs_contour = None
+dataf_contour = None
+tsavef_contour = None
+
 for harmonic in ks:
     freq = 1.00 * harmonic
     tf_f = np.arange(0, 2 * np.pi / freq, dt)
@@ -312,6 +322,15 @@ for harmonic in ks:
     energy_lst = [energy_true, energy_pod, energy_oi, energy_oi_gs, energy_nit, energy_nit_gs]
     energies.append(energy_lst)
 
+    if harmonic == harmonic_contour:
+        sol_pod_contour = sol_pod.copy() if sol_pod is not None else None
+        sol_oi_contour = sol_oi.copy() if sol_oi is not None else None
+        sol_oi_gs_contour = sol_oi_gs.copy() if sol_oi_gs is not None else None
+        sol_nit_contour = sol_nit.copy() if sol_nit is not None else None
+        sol_nit_gs_contour = sol_nit_gs.copy() if sol_nit_gs is not None else None
+        dataf_contour = dataf.copy() if dataf is not None else None
+        tsavef_contour = tsavef.copy() if tsavef is not None else None
+
 colors = ['k', COLORS["galerkin"], COLORS["opinf"], COLORS["opinf"], COLORS["nitrom"], COLORS["nitrom"]]
 lstyle = ['-', STYLES["galerkin"], STYLES["notgas"], STYLES["gas"], STYLES["notgas"], STYLES["gas"]]
 
@@ -330,7 +349,7 @@ for k in range(len(energies)):
     style_axes(ax[k], xlabel='' if k < 2 else r'Time $t$', ylabel='Energy' if k == 1 else '', xlim=(0.0, tsavef[-1]))
     ax[k].grid(which="minor", visible=False)
     if k == 0:
-        ax[k].set_ylim(0, energies[k][-2].max()*1.1)
+        ax[k].set_ylim(0, energies[k][-1].max()*1.1)
     elif k == 1:
         ax[k].set_ylim(0, energies[k][-2].max()*1.1)
     else:
@@ -343,20 +362,21 @@ for k in range(len(energies)):
 save_figure(fig, f"cavity_50_forcing_{amp_str}_energy")
 
 # --- 4) Snapshot contour plots ---
-idx = np.argmin(np.abs(tsavef - 30))
+idx = np.argmin(np.abs(tsavef_contour - 30))
 ii = 2  # index for vorticity output
-X, Y, fields = pp.output_fields(flow, dataf[:, idx] - flow.q_sbf)
-vmin = np.min(fields[ii])
+X, Y, fields = pp.output_fields(flow, dataf_contour[:, idx] - flow.q_sbf)
+fields_window = np.flipud(fields[ii])[:39, :]
+vmin = np.min(fields_window)
 vmax = -vmin
-# print(vmin, vmax)
+print(vmin, vmax)
 
 snapshots = [
-    ("FOM", dataf[:, idx] - flow.q_sbf),
-    ("POD-Gal.", phi_pre @ sol_pod[:, idx]),
-    ("OpInf", phi_pre @ sol_oi[:, idx]),
-    ("GasOpInf", phi_pre @ sol_oi_gs[:, idx]),
-    ("NiTROM", phi_pre @ sol_nit[:, idx]),
-    ("GasNiTROM", phi_pre @ sol_nit_gs[:, idx]),
+    ("FOM", dataf_contour[:, idx] - flow.q_sbf),
+    ("POD-Gal.", phi_pre @ sol_pod_contour[:, idx]),
+    ("OpInf", phi_pre @ sol_oi_contour[:, idx]),
+    ("GasOpInf", phi_pre @ sol_oi_gs_contour[:, idx]),
+    ("NiTROM", phi_pre @ sol_nit_contour[:, idx]),
+    ("GasNiTROM", phi_pre @ sol_nit_gs_contour[:, idx]),
 ]
 
 fig, axes = plt.subplots(3, 2, figsize=(FIG_WIDTH_WIDE, 5.0), constrained_layout=True)
@@ -364,9 +384,9 @@ axes = axes.ravel()
 
 for idx_subplot, (ax, (title, state_vec)) in enumerate(zip(axes, snapshots)):
     X, Y, fields = pp.output_fields(flow, state_vec)
-    # if title == "POD-Gal." and amp_str == '0p9':
-    #     fields[ii] = np.zeros_like(fields[ii])
-    #     title += " (blew up)"
+    if title == "OpInf" and amp_str == '0p9':
+        fields[ii] = np.zeros_like(fields[ii])
+        title += " (blew up)"
     cf = ax.contourf(
         X[ii][:39, :],
         Y[ii][:39, :],
@@ -378,17 +398,17 @@ for idx_subplot, (ax, (title, state_vec)) in enumerate(zip(axes, snapshots)):
     )
     ax.set_aspect('equal', adjustable='box')
     ax.tick_params(direction='out', top=False, right=False)
-    
+
     if idx_subplot < 4:
         ax.set_xticklabels([])
     else:
         ax.set_xlabel(r'$x$')
-    
+
     if idx_subplot % 2 != 0:
         ax.set_yticks([])
     else:
         ax.set_ylabel(r'$y$')
-    
+
     ax.text(
         0.5, 0.65, title,
         transform=ax.transAxes,
@@ -400,7 +420,7 @@ for idx_subplot, (ax, (title, state_vec)) in enumerate(zip(axes, snapshots)):
     ax.yaxis.label.set_fontsize(16)
     ax.yaxis.set_tick_params(labelsize=16)
 
-save_figure(fig, f"cavity_50_forcing_{amp_str}_k{ks[-1]}_snapshot_all")
+save_figure(fig, f"cavity_50_forcing_{amp_str}_k{harmonic_contour}_snapshot_all")
 
 # --- 5) Training History Plots ---
 with open(os.path.join(models_dir, "gas_opinf_history.pkl"), "rb") as f:
@@ -414,9 +434,9 @@ with open(os.path.join(models_dir, "gas_nitrom_history.pkl"), "rb") as f:
 time_gas_opinf = hist_gas_opinf["time"]
 time_nitrom = hist_nitrom["time"]
 time_gas_nitrom = hist_gas_nitrom["time"]
-print("GasOpInf time:", time_gas_opinf)
-print("NiTROM time:", time_nitrom)
-print("GasNiTROM time:", time_gas_nitrom)
+print("GasOpInf time (hours):", time_gas_opinf/60/60)
+print("NiTROM time (hours):", time_nitrom/60/60)
+print("GasNiTROM time (hours):", time_gas_nitrom/60/60)
 
 # Cost vs Iteration Plot
 fig, ax1 = make_figure()
@@ -425,6 +445,7 @@ ax2 = ax1.twinx()
 l1 = ax1.semilogy(hist_nitrom["iters"], hist_nitrom["loss"], label='NiTROM', color=COLORS["nitrom"], linestyle=STYLES["notgas"])
 l2 = ax1.semilogy(hist_gas_nitrom["iters"], hist_gas_nitrom["loss"], label='GasNiTROM', color=COLORS["nitrom"], linestyle=STYLES["gas"])
 style_axes(ax1, xlabel='Iteration', ylabel=r'$J_{\text{NiTROM}}$', log_y=True)
+ax1.yaxis.label.set_color(COLORS["nitrom"])
 ax1.tick_params(axis='y', colors=COLORS["nitrom"])
 
 l3 = ax2.semilogy(hist_gas_opinf["iters"], hist_gas_opinf["loss"], label='GasOpInf', color=COLORS["opinf"], linestyle=STYLES["gas"])
