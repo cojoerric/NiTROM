@@ -22,7 +22,7 @@ traj_path = "./trajectories/"
 models_dir = "./models/"
 r = 50  # reduced dimension
 poly_comp = [1, 2]
-shift_start_times = (0.0, 2.5, 5.0)  # custom start times for each shift window
+shift_start_times = [0.0]  # custom start times for each shift window
 
 # Initialization model for GAS-NiTROM: "galerkin", "gas_opinf", or "nitrom".
 init_model = "gas_opinf"
@@ -108,6 +108,7 @@ B = fom.f.copy()  # shape (19700,)
 # Trajectory details
 amps = np.load(traj_path + "amps.npy")
 n_traj = len(amps)
+printr(n_traj)
 phi_pre = np.load(traj_path + "phi_pre.npy")  # (19700, 200)
 
 # Load the trajectories into a TrainingPool
@@ -166,7 +167,7 @@ nitrom = NitromModule(td_init, registry, fom=fom, n_substeps=15, adjoint_method=
 nitrom.set_manifold_types(["Phi", "Psi"], ["grassmann", "stiefel"])
 
 # Alternating optimization parameters
-n_outer_iterations = 6
+n_outer_iterations = 20
 epochs_bases = 25
 epochs_operators = 25
 

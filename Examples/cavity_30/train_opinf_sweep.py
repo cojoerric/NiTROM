@@ -105,7 +105,7 @@ psi_tot = phi_pre @ Phi
 (A2r, A3r), _ = fom.assemble_petrov_galerkin_tensors(phi_tot, psi_tot, B, [0,0,1,0,0,0,0,0])
 
 # Sweep range
-regs = np.logspace(5, 8, 50)
+regs = np.logspace(1, 5, 50)
 
 best_opinf_reg = None
 best_opinf_cost = float("inf")
@@ -116,7 +116,7 @@ best_gas_cost = float("inf")
 best_gas_params = None
 best_gas_physical_tensors = None
 
-printr(f"Running sweep over {len(regs)} regularization parameters from 1e-6 to 1e-1...")
+printr(f"Running sweep over {len(regs)} regularization parameters from {regs[0]} to {regs[-1]}...")
 printr("-" * 75)
 printr(f"{'Regularization':<20} | {'OpInf NiTROM Cost':<22} | {'GAS-OpInf NiTROM Cost':<22}")
 printr("-" * 75)
